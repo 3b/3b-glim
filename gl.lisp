@@ -155,8 +155,7 @@ CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
                             '3b-glim/gl-shaders:vertex
                             '3b-glim/gl-shaders:fragment
                             :version 330)
-                           0))
-    #++(error "todo: shaders ~s ~s" api config)))
+                           0))))
 
 (defun recompile-modified-shaders ()
   (let* ((m *modified-shader-functions*)
@@ -191,7 +190,6 @@ CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
          (api (first cfg))
          (config (second cfg)))
     (assert (member api '(:gl :gles)))
-    #++(error "todo: draw ~s ~s" api config)
     (recompile-modified-shaders)
     (gl:use-program (shader config))
     (setf *u* (list config))

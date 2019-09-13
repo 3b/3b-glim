@@ -350,7 +350,6 @@
                :modelview (copy-seq (ensure-matrix :modelview))
                :projection (copy-seq (ensure-matrix :projection)))
          (draws *state*)))
-      #++(break "fc ")
       (setf (%primitive *state*) nil))))
 
 (defun set-primitive (primitive size &optional (start *buffer-index*)
@@ -358,14 +357,11 @@
   (setf (%primitive *state*)
         (list primitive size *buffer* start *index-buffer* istart)))
 
-(- 1769364 1767744)
-(/ 1620 108)15
-(/ 972 108)9
+
 (defun overflow ()
   (assert (primitive *state*))
   (let ((prim (primitive *state*))
         (end *buffer-index*))
-    #++(break "flow")
     (finish-chunk)
     (reset-buffers)
     (maybe-call-draw-callback)
@@ -377,10 +373,7 @@
             (istart *index-buffer-index*))
         (set-primitive primitive size start istart)
         (copy-partial primitive buffer old-start end)
-        (set-primitive primitive size start istart)
-        #++(setf (%primitive *state*)
-                 (list primitive size *buffer-index* start
-                       *index-buffer-index* istart))))))
+        (set-primitive primitive size start istart)))))
 
 (defun begin (primitive)
   #++(declare (optimize speed))
@@ -393,15 +386,6 @@
        (setf (aref cv (+ o +prim-mode-flag+)) +line-flag+))
       ((:triangles :triangle-fan :triangle-strip :quads :quad-strip)
        (setf (aref cv (+ o +prim-mode-flag+)) +point-flag+)))
-    #++(cond
-         ((and (eq primitive :points)
-               (or (/= 1 (current-point-size *state*))
-                   (gethash :point-smooth (flags *state*))))
-          (setf prim-size (* 4 prim-size)))
-         ((and (find prim-size #(:lines :line-strip :line-loop))
-               (or (/= 1 (current-line-width *state*))
-                   (gethash :line-smooth (flags *state*))))
-          (setf prim-size (* 2 prim-size))))
     ;; todo: error messages
     (assert prim-size)
     (assert (not (primitive *state*)))
