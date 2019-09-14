@@ -56,6 +56,11 @@
 (defconstant +point-flag+ 1)
 (defconstant +line-flag+ 2)
 (defconstant +line-cap-flag+ 3)
+;; values for tex-mode* uniforms
+(defconstant +tex-mode-off+ 0)
+(defconstant +tex-mode-1d+ 1)
+(defconstant +tex-mode-2d+ 2)
+(defconstant +tex-mode-3d+ 3)
 
 ;; fog coord? texgen?
 (defparameter *default-vertex-format*
@@ -351,8 +356,25 @@
                (* 3
                   (floor (- *index-buffer-index* index-start)
                          3))
-               :modelview (copy-seq (ensure-matrix :modelview))
-               :projection (copy-seq (ensure-matrix :projection)))
+               :uniforms
+               ;; fixme: build this once and only store changes?
+               (list
+                'mv (copy-seq (ensure-matrix :modelview))
+                'proj (copy-seq (ensure-matrix :projection))
+                'line-width (current-line-width *state*)
+                'point-size (current-point-size *state*)
+                'tex-mode0 +tex-mode-off+
+                'tex-mode1 +tex-mode-off+
+                'tex0-1 0
+                'tex1-1 0
+                'tex0-2 0
+                'tex1-2 0
+                'tex0-3 0
+                'tex1-3 0
+                'light-postion (v4 0 3 0 1)
+                ;; todo
+                ;; 'normal-matrix (??)
+                ))
          (draws *state*)))
       (setf (%primitive *state*) nil))))
 

@@ -32,6 +32,8 @@
                (glim:color (s 4) (s 5) (s 6))
                (glim:tex-coord 0 1)
                (apply 'glim:vertex (aref v d))))
+      (glim:point-size (+ 1 (random 16.0)))
+      (glim:line-width (+ 1 (random 16.0)))
       (glim:with-primitives :quads
         (glim:normal 0 0 1)
         (q 0 1 2 3)
@@ -163,6 +165,7 @@
 (defmethod glut:keyboard ((window 3b-glim-example) key x y)
   (declare (ignore x y))
   (case key
+    (#\space (setf *anim* (not *anim*)))
     (#\Esc
      (glut:destroy-current-window))))
 

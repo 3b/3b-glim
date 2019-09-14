@@ -1,5 +1,12 @@
 (defpackage #:3b-glim/gl-shaders
   (:use #:3bgl-glsl/cl)
+  (:import-from #:3b-glim
+                #:mv #:proj #:mvp #:normal-matrix
+                #:tex-mode0 #:tex-mode1
+                #:tex0-1 #:tex0-2 #:tex0-3
+                #:tex1-1 #:tex1-2 #:tex1-3
+                #:line-width #:point-size #:light-position
+                )
   (:export #:vertex
            #:fragment))
 (in-package #:3b-glim/gl-shaders)
@@ -76,25 +83,18 @@
       (2 ;; line
        (let* ((dist (length (vec3 mv-pos)))
               (corner (.z flags))
-              (tn (normalize (* (mat3 mv) (.xyz tangent))))
+              (tn (* (mat3 mv)
+                     (.xyz tangent)))
               (tx (cross tn
-                         (vec3 0 0 1))))
+                         (.xyz mv-pos)))
+              (d 1))
          (case corner
            (0
-            (setf dxy (vec4 -1 -1 0 0)))
-           (1
-            (setf dxy (vec4 -1 1 0 0)))
-           (2
-            (setf dxy (vec4 1 1 0 0)))
+            (setf d -1))
            (3
-            (setf dxy (vec4 1 -1 0 0)))
-           (t
-            (setf dxy (vec4 33 33 0 0))))
-         (setf dxy (vec4 (+ #++(* (.x dxy) (.yx tx))
-                            0
-                            (* (.y dxy) (.xy tx)))
-                         0 0))
-         (setf (.xy dxy) (* 1  (.xy dxy)))
+            (setf d -1)))
+         (setf dxy (vec4 (* d (normalize (.xy tx))) 0 0))
+         (setf (.xy dxy) (* line-width (.xy dxy)))
          (when (< (abs (length dxy)) 2)
            (setf dxy (* 2 (normalize dxy))))
          (setf (.xy dxy)

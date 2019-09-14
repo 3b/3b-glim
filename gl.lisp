@@ -193,15 +193,20 @@ CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
            (batches nil)
            (itype :unsigned-short)
            (isize 2)
-           (uniforms (uniforms config)))
-      (labels ((u (x v)
-                 (gl:uniformf (car
-                               (gethash x uniforms '(-1)))
-                              v))
-               (uv (x v)
-                 (gl:uniformfv (car
-                                (gethash x uniforms '(-1)))
-                               v))
+           (uniformh (uniforms config)))
+      (labels ((uv (u v)
+                 (gl:uniformfv (car (gethash u uniformh '(-1))) v))
+               (uniforms (uniforms)
+                    (loop for (u v) on uniforms by #'cddr
+                          for uu = (gethash u uniformh)
+                          for (ui nil nil ut) = uu
+                          do (when (and ui (not (minusp ui)))
+                               (ecase ut
+                                 (:float (gl:uniformf ui v))
+                                 ((:vec2 :vec3 :vec4)
+                                  (gl:uniformfv ui v))
+                                 (:mat4 (gl:uniform-matrix-4fv ui v nil)))))
+                    )
                (draw ()
                  (when batches
                    (setf itype
@@ -237,32 +242,20 @@ CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
                        (a 3 4 :color)
                        (a 5 4 :tangent+width)
                        (a 7 4 :flags :byte)))
-                   (u '3b-glim/gl-shaders::point-size 5)
-                   (u '3b-glim/gl-shaders::line-width 5)
-
-                   (loop with mvu = (car (gethash '3b-glim/gl-shaders::mv
-                                                  uniforms '(-1)))
-                         with proju = (car (gethash '3b-glim/gl-shaders::proj
-                                                    uniforms '(-1)))
-                         for (p base start count mv proj)
+                   (loop for (p base start count uniforms)
                            in (nreverse (shiftf batches nil))
-                         do (gl:with-pushed-matrix* (:modelview)
-                              (gl:load-matrix mv)
-                              (gl:uniform-matrix-4fv mvu mv nil)
-                              (gl:with-pushed-matrix* (:projection)
-                                (gl:load-matrix proj)
-                                (gl:uniform-matrix-4fv proju proj nil)
-                                (when *once*
-                                  (format t "draw ~s ~s @ ~s~%" p count base))
-                                (%gl:draw-elements-base-vertex
-                                 p count
-                                 itype (* start isize)
-                                 base)))))))
+                         do (uniforms uniforms)
+                            (when *once*
+                              (format t "draw ~s ~s @ ~s~%" p count base))
+                            (%gl:draw-elements-base-vertex
+                             p count
+                             itype (* start isize)
+                             base)))))
         (uv '3b-glim/gl-shaders::dims (dims config))
         (3b-glim:map-draws
          (lambda (prim &key buffer start end base-index index-buffer
                          start-index index-count
-                         modelview projection)
+                         uniforms)
            (declare (ignore start))
            (unless (and (vectorp buffer)
                         (vector index-buffer))
@@ -280,7 +273,7 @@ CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
                  (cadr last-ib) (max (cadr last-ib)
                                      (+ start-index index-count)))
            (push (list prim base-index start-index index-count
-                       modelview projection)
+                       uniforms)
                  batches))
          draws)
         (draw))
