@@ -6,6 +6,10 @@
    #:with-state
    #:with-frame
    #:flush-output
+
+   #:get-draws
+   #:map-draws
+
    ;; geometry specification
    #:with-primitives #:with-primitive
    #:begin
@@ -13,6 +17,10 @@
    #:vertex
    #:tex-coord
    #:normal
+   #:fog-coord
+   #:secondary-color
+   #:color
+
    ;; matrix ops / utilities
    #:matrix-mode
    #:load-identity
@@ -24,7 +32,13 @@
    #:with-pushed-matrix
    #:push-matrix
    #:pop-matrix
+   #:ensure-matrix
+   #:load-matrix
 
+   #:look-at
+   #:frustum
+   #:ortho
+   #:perspective
 
    ;; handles deprecated things, passes rest to GL
    #:enable
@@ -33,21 +47,10 @@
    #:shade-model
    #:light-model
    #:color-material
-
-   ;; (possibly should import and reexport everything from GL, so can
-   ;; just use this package with local gl: nickname?)
-
-   #:fog-coord
-   #:secondary-color
-   #:get-draws
-   #:map-draws
-   #:perspective
-   #:color
-   #:frustum
-   #:ortho
-   #:look-at
+   ;; other state
    #:line-width
    #:point-size
-   #:ensure-matrix
-   #:viewport
-   #:load-matrix))
+
+   ;;
+
+))
