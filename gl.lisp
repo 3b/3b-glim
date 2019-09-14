@@ -57,6 +57,7 @@
   (if (member api '(:opengl :gl))
       :gl
       :gles))
+
 (defun configure-renderer* (api major minor extension-list)
   (declare (ignorable minor))
   (setf api (canonicalize-api api))
@@ -141,7 +142,6 @@
 (setf 3bgl-shaders::*print-shaders* t)
 
 
-
 (defun load-shaders ()
   "Loads shaders used by glim into current GL context. Must call
 CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
@@ -149,18 +149,17 @@ CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
          (api (first cfg))
          (config (second cfg)))
     (assert (member api '(:gl :gles)))
-    (setf (shader config) (or
-                           (3bgl-shaders::reload-program
-                            nil
-                            '3b-glim/gl-shaders:vertex
-                            '3b-glim/gl-shaders:fragment
-                            :version 330)
-                           0))))
+      (time
+       (setf (values (shader config)
+                     (uniforms config))
+             (3bgl-shaders::reload-program
+              (shader config)
+              '3b-glim/gl-shaders:vertex
+              '3b-glim/gl-shaders:fragment
+              :version 330)))))
 
 (defun recompile-modified-shaders ()
   (let* ((m *modified-shader-functions*)
-         (config (second (3b-glim::renderer-config 3b-glim::*state*)))
-         (shader (shader config))
          (recompile nil))
     ;; flag any shaders we are using
     (setf recompile (intersection '(3b-glim/gl-shaders:fragment
@@ -172,14 +171,7 @@ CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
     (when recompile
       (format t "~%recompiling shader program for changes in functions:~&  ~a~%"
               m)
-      (time
-       (setf (values (shader config)
-                     (uniforms config))
-             (3bgl-shaders::reload-program
-              shader
-              '3b-glim/gl-shaders:vertex
-              '3b-glim/gl-shaders:fragment
-              :version 330))))))
+      (load-shaders))))
 
 
 (defvar *u*)
