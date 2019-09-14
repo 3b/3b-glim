@@ -14,7 +14,8 @@
 ;;
 ;;; midrange: (es2+exts, gl 3.?+?) VAOs, multidraw etc
 ;;
-;;; high-end: (gl 4.3+, es 3.2?) VAOs, multi-draw-arrays-indirect, tess shaders for points/lines, etc
+;;; high-end: (gl 4.3+, es 3.2?) VAOs, multi-draw-arrays-indirect,
+;;;   tess shaders for points/lines, etc
 
 
 ;;;; or maybe separate splits on CPU and GPU
@@ -276,7 +277,8 @@ CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
                    (car last-ib) index-buffer
                    (cadr last-ib) (+ start-index index-count)))
            (setf (cadr last-vb) (max (cadr last-vb) end)
-                 (cadr last-ib) (max (cadr last-ib) (+ start-index index-count)))
+                 (cadr last-ib) (max (cadr last-ib)
+                                     (+ start-index index-count)))
            (push (list prim base-index start-index index-count
                        modelview projection)
                  batches))
