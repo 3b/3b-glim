@@ -314,7 +314,9 @@ CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
        (init-state/gl :api ,api))
      ,@body))
 
-(defmethod 3b-glim::backend-viewport ((state glim-gl-state) x y w h)
-  (gl:viewport x y w h)
-  (setf (dims state)
-        (3b-glim::v4 x y (/ w) (/ h))))
+(defmethod 3b-glim::begin-frame ((state glim-gl-state))
+  (let ((v (gl:get* :viewport)))
+    (setf (dims state)
+          (3b-glim::v4 (aref v 0) (aref v 1)
+                       (/ (aref v 2)) (/ (aref v 3)))))
+)

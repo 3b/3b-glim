@@ -142,7 +142,7 @@
     (glut:swap-buffers)))
 
 (defmethod glut:reshape ((window 3b-glim-example) width height)
-  (glim:viewport 0 0 width height)
+  (gl:viewport 0 0 width height)
   (glim:matrix-mode :projection)
   (glim:load-identity)
   (glim:perspective 50 (/ width height) 0.5 20)

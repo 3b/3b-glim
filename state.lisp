@@ -253,12 +253,16 @@
                                    :element-type '(unsigned-byte 16)))
   (setf *index-buffer-index* 0))
 
+(defmethod begin-frame ((state glim-state))
+  (reset-buffers)
+  (begin-frame (second (renderer-config state))))
+
 (defmacro with-frame (() &body body)
   `(let ((*buffer* nil)
          (*buffer-index* 0)
          (*index-buffer* nil)
          (*index-buffer-index* 0))
-     (reset-buffers)
+     (begin-frame *state*)
      (prog1
          (with-balanced-matrix-stacks () ,@body)
        (maybe-call-draw-callback))))
@@ -760,6 +764,3 @@
 (defun point-size (w)
   (setf (current-point-size *state*) (coerce w 'single-float)))
 
-(defmethod backend-viewport (be x y w h))
-(defun viewport (x y w h)
-  (backend-viewport (second (renderer-config *state*)) x y w h))
