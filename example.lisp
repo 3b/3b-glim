@@ -51,7 +51,7 @@
          (glim:normal 0 0 1)
          (q 0 1 2 3)
          (progn
-           (glim:normal 0 0 -1) :linear
+           (glim:normal 0 0 -1)
            (q 5 6 7 4)
            (glim:normal -1 0 0)
            (q 4 0 3 7)
