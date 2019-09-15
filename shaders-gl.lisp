@@ -70,7 +70,7 @@
          (1 (setf (.y bary) 1))
          (2 (setf (.z bary) 1))
          (t (setf (.w bary) 1)))
-       (setf (.w bary) (/ line-width (.w pp)))
+       (setf (.w bary) line-width)
        ;; workaround for type inference bug
        0)
       (3 ;; quads
@@ -224,13 +224,14 @@
   (let* ((fw (fwidth (.xyz bary)))
          (d (min (.x fw) (min (.y fw) (.z fw))))
          (w (.w bary))
-         (a (smooth-step (- (* fw (max 1 w)) d)
-                         (+ (* fw (max 1 w)) d)
+         (mw (max 1.5 w))
+         (a (smooth-step (- (* fw mw) d)
+                         (+ (* fw mw) d)
                          (.xyz bary)))
          (m (- 1 (min (.x a) (min (.y a) (.z a))))))
     (when (<= m 0)
-         (discard))
-    (return (* m 1 (min (* w w) 1)))))
+      (discard))
+    (return (* m 1 (min w 1)))))
 
 (defun wire-quad (bary)
   (let* ((d  (fwidth (.xy bary)))
