@@ -70,6 +70,7 @@
          (1 (setf (.y bary) 1))
          (2 (setf (.z bary) 1))
          (t (setf (.w bary) 1)))
+       (setf (.w bary) (/ line-width (.w pp)))
        ;; workaround for type inference bug
        0)
       (3 ;; quads
@@ -80,10 +81,10 @@
          (2 (setf (.xy bary) (vec2 1 -1)))
          (3 (setf (.xy bary) (vec2 1 1))))
        (let ((w 1))
-        (setf (.xy bary) (* (.xy bary)
-                            w
-                            1))
-         (setf (.w bary) (/ line-width (.w pp))))
+         ;(setf (.xy bary) (.xy bary))
+         (setf (.zw bary)  (vec2 line-width))
+         #++(setf (.w bary) (* line-width (.w dims)))
+         )
        ;; workaround for type inference bug
        0)
       (1
@@ -122,8 +123,8 @@
                      (/ (.xyz pp) (.w pp))))
               (tl (length (* (.xy tn) (/ (.zw dims)) 0.5)))
               (tx (normalize (.xy (cross tn (.xyz mv-pos)))))
-              (s2 (+ line-width
-                     (if smooth1 2.0 0.0)))
+              (lw line-width)
+              (s2 (+ lw (if smooth1 2.0 0.0)))
               (s1 (- s2)))
          (if smooth1
              (let ((d (vec2 1 1))
@@ -131,17 +132,17 @@
                (case corner
                  (0
                   (setf tx (- tx))
-                  (setf bary (vec4 (- s1 tl) s1 line-width tl))
+                  (setf bary (vec4 (- s1 tl) s1 lw tl))
                   (setf d (vec2 1 -1)))
                  (1
                   (setf tx (- tx))
-                  (setf bary (vec4 (- s1 tl) s2 line-width tl))
+                  (setf bary (vec4 (- s1 tl) s2 lw tl))
                   (setf d (vec2 1 1)))
                  (2
-                  (setf bary (vec4 (+ s2 tl) s2 line-width tl))
+                  (setf bary (vec4 (+ s2 tl) s2 lw tl))
                   (setf d (vec2 1 1)))
                  (3
-                  (setf bary (vec4 (+ s2 tl) s1 line-width tl))
+                  (setf bary (vec4 (+ s2 tl) s1 lw tl))
                   (setf d (vec2 1 -1))))
                (setf dxy (vec4 (+ (* (.y d) tx)
                                   ty
@@ -190,11 +191,12 @@
          (s (* #.(/ (sqrt 2.0) 2)
                (length (vec2 (dfdx r) (dfdy r)))))
          #++(s (fwidth r))
-         (e (smooth-step (+ (max 1 ps) s) (- (max 1 ps) s) r))
+         (mps (max 1.5 ps))
+         (e (smooth-step (+ mps s) (- mps s) r))
          #++(e (step r ps)))
     (when (<= e 0.0)
       (discard))
-    (return (* e (min (* ps ps) 1)))))
+    (return (* e (min ps 1)))))
 
 (defun smooth-line (bary)
   (let* ((ps (.z bary))
@@ -206,28 +208,51 @@
          (r (length (vec2 (- x tl) y)))
          (s2 (* 1 #.(sqrt 2.0)
                 (length (vec2 (dfdx r) (dfdy r)))))
+         (mps (max ps 1.5))
          #++(s (fwidth r))
          (e (if (< x (* 1 tl))
-                (smooth-step (+ (max 1 ps) s1) (- (max 1 ps) s1) y)
-                (smooth-step (+ (max 1 ps) s2) (- (max 1 ps) s2) r)))
+                (smooth-step (+ mps s1) (- mps s1) y)
+                (smooth-step (+ mps s2) (- mps s2) r)))
          #++(e (if (< x (* 1 tl))
                    (step y (max 1 ps))
                    (step r (max 1 ps)))))
     (when (<= e 0)
       (discard))
-    (return (* e (min (* ps ps) 1)))))
+    (return (* e (min ps 1)))))
+
+(defun wire-tri (bary)
+  (let* ((fw (fwidth (.xyz bary)))
+         (d (min (.x fw) (min (.y fw) (.z fw))))
+         (w (.w bary))
+         (a (smooth-step (- (* fw (max 1 w)) d)
+                         (+ (* fw (max 1 w)) d)
+                         (.xyz bary)))
+         (m (- 1 (min (.x a) (min (.y a) (.z a))))))
+    (when (<= m 0)
+         (discard))
+    (return (* m 1 (min (* w w) 1)))))
 
 (defun wire-quad (bary)
-  (let* ((d (fwidth (.xy bary)))
+  (let* ((d  (fwidth (.xy bary)))
+         (dx (* 1 (abs (dfdx (.xy bary)))))
+         (dy (* 1 (abs (dfdy (.xy bary)))))
          (w (.w bary))
-         (a (smooth-step (- 1 (+ (* d (max 1 w)) d))
-                         (- 1 (- (* d (max 1 w)) d)
-                            )
+         (w1 (- 1 (* (max 2 (.w bary))
+                     (vec2 (max (.x dx) (.x dy))
+                           (max (.y dx) (.y dy))))))
+         #++(w2 (- 1 (* (max 1 (.w bary))
+                      (vec2 (max (.x dx) (.x dy))
+                            (max (.y dx) (.y dy))))
+                (- d)))
+         #++(a (step (vec2 (- 1 w))
+                     (abs (.xy bary))))
+         (a (smooth-step (- w1 d)
+                         (+ w1 d)
                          (abs (.xy bary))))
          (m (max (.x a) (.y a))))
     (when (<= m 0 )
       (discard))
-    (return (* m (min (* w w) 1)))))
+    (return (* m (min w 1)))))
 
 
 (defun smoothing (mode bary)
@@ -238,9 +263,11 @@
       ;; smooth
       (1 (case mode
            (0 ;; tri
-            (setf a (max 0.1 (length bary))))
+            #++(setf a (max 0.1 (length bary)))
+            (setf a 0.4))
            (3 ;; quad
-            (setf a (wire-quad bary)))
+            #++(setf a (wire-quad bary))
+            (setf a 0.5))
            (1 ;; points
             (setf a (smooth-point bary)))
            (2 ;; lines
@@ -251,7 +278,7 @@
       (2
        (case mode
          (0 ;tri
-          (setf a 1.0))
+          (setf a (wire-tri bary)))
          (3 ;quad
           (setf a (wire-quad bary)))))
       (t

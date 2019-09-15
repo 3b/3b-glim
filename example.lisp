@@ -6,7 +6,7 @@
 (defclass 3b-glim-example (glut:window)
   ((shaders :accessor shaders :initform nil))
   (:default-initargs :width 1024 :height 1024 :title "3b-glim example"
-                     :mode '(:double :rgb :depth)
+                     :mode '(:double :rgb :depth :multisample)
                      :right-menu '(:click :exit)))
 
 
@@ -32,21 +32,24 @@
                (glim:color (s 4) (s 5) (s 6))
                (glim:tex-coord 0 1)
                (apply 'glim:vertex (aref v d))))
-      (let ((w 20.0))
+      (let ((w 16.0))
         (glim:point-size (+ 0 (random w)))
-        #++(glim:line-width (+ 0 (random w)))
+       (glim:line-width (+ 0 (random w)))
         #++(glim:line-width (expt 2 (- (log w 2) (random (log w 2)))))
         #++(glim:line-width (- w (log (random (expt 2.0 w)) 2)))
-        (glim:line-width (- 16 (expt (random (expt 2.0 16)) 1/4))))
-      #++(glim:line-width 20)
+        #++(glim:line-width (- 16 (expt (random (expt 2.0 16)) 1/4))))
+      ;(glim:line-width 10)
       (glim:with-pushed-matrix (:modelview)
         (glim:scale 2 2 2)
-       (glim:with-primitives :quads
+       (glim:with-primitives
+           :quads
+           ;:triangles
+           ;:points
+           ;:lines
          (glim:normal 0 0 1)
          (q 0 1 2 3)
-
          (progn
-           (glim:normal 0 0 -1)
+           (glim:normal 0 0 -1) :linear
            (q 5 6 7 4)
            (glim:normal -1 0 0)
            (q 4 0 3 7)
@@ -124,15 +127,20 @@
                (* 0.1 (abs (sin (/ now x))))))
         (gl:clear-color (s 2) (s 3) (s 4) 1))
       (gl:enable :blend :depth-test
-                 :polygon-smooth)
+                 :polygon-smooth :sample-alpha-to-coverage)
       (gl:disable :cull-face :lighting :light0 :texture-2d
-                  :polygon-smooth
-                             :depth-test)
+                  ;;:polygon-smooth
+                 ; :blend
+                 ;:sample-alpha-to-coverage
+                             #++ :depth-test)
       (gl:clear :color-buffer :depth-buffer)
 
       (gl:blend-func :src-alpha :one-minus-src-alpha)
+      ;(gl:blend-func :src-alpha :one)
       #++(gl:blend-func :src-alpha :one)
-
+      (gl:enable :multisample)
+      #++(format t "~s ~s~%"(gl:get* :sample-buffers)
+              (gl:get* :samples))
       (glim:with-pushed-matrix (:modelview)
         (glim:matrix-mode :modelview)
         (glim:look-at '(0 0 4) '(0 0 0) '(0 1 0))
