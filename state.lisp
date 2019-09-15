@@ -55,12 +55,18 @@
 (defconstant +triangle-flag+ 0)
 (defconstant +point-flag+ 1)
 (defconstant +line-flag+ 2)
-(defconstant +line-cap-flag+ 3)
+;;(defconstant +line-cap-flag+ 3)
 ;; values for tex-mode* uniforms
 (defconstant +tex-mode-off+ 0)
 (defconstant +tex-mode-1d+ 1)
 (defconstant +tex-mode-2d+ 2)
 (defconstant +tex-mode-3d+ 3)
+;; indices for draw-flags uniform
+(defconstant +draw-flag-mode+ 0)
+;; values for +draw-flag-mode+
+(defconstant +draw-mode-normal+ 0)
+(defconstant +draw-mode-smooth+ 1)
+(defconstant +draw-mode-wireframe+ 2) ;; tris/quads only
 
 ;; fog coord? texgen?
 (defparameter *default-vertex-format*
@@ -411,7 +417,7 @@
       ((:lines :line-strip)
        (setf (aref cv (+ o +prim-mode-flag+)) +line-flag+))
       ((:triangles :triangle-fan :triangle-strip :quads :quad-strip)
-       (setf (aref cv (+ o +prim-mode-flag+)) +point-flag+)))
+       (setf (aref cv (+ o +prim-mode-flag+)) +triangle-flag+)))
     ;; todo: error messages
     (assert prim-size)
     (assert (not (primitive *state*)))
@@ -491,7 +497,8 @@
              (type u16 vs)
              (type octet-vector *buffer*))
     (if end
-        ;; calculate vector between ends and store in both points
+        ;; store opposite end in each point, for calculating wide lines
+        ;; todo: rename 'tangent' uniform now that it is opposite end
         (let* ((vf (vertex-format *state*))
                (s (- *buffer-index* vs))
                (to (first (gethash :tangent+width vf)))
@@ -504,16 +511,15 @@
                (ev (sb-cga:vec
                     (nibbles:ieee-single-ref/le cv 0)
                     (nibbles:ieee-single-ref/le cv 4)
-                    (nibbles:ieee-single-ref/le cv 8)))
-               (tv (sb-cga:vec- sv ev)))
+                    (nibbles:ieee-single-ref/le cv 8))))
           (declare (type u32 s)
                    (type u16 fo to))
           (loop for i below 3
                 do (setf (nibbles:ieee-single-ref/le *buffer*
                                                      (+ s to (* i 4)))
-                         (aref tv i))
+                         (aref ev i))
                    (setf (nibbles:ieee-single-ref/le cv (+ to (* i 4)))
-                         (aref tv i)))
+                         (aref sv i)))
 
           ;; set corner index in flags of start vertex
           (setf (aref *buffer* (+ s fo +corner-index-flag+)) 0)

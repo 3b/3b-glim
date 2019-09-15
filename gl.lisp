@@ -195,18 +195,19 @@ CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
            (isize 2)
            (uniformh (uniforms config)))
       (labels ((uv (u v)
-                 (gl:uniformfv (car (gethash u uniformh '(-1))) v))
+                 (when uniformh
+                   (gl:uniformfv (car (gethash u uniformh '(-1))) v)))
                (uniforms (uniforms)
-                    (loop for (u v) on uniforms by #'cddr
-                          for uu = (gethash u uniformh)
-                          for (ui nil nil ut) = uu
-                          do (when (and ui (not (minusp ui)))
-                               (ecase ut
-                                 (:float (gl:uniformf ui v))
-                                 ((:vec2 :vec3 :vec4)
-                                  (gl:uniformfv ui v))
-                                 (:mat4 (gl:uniform-matrix-4fv ui v nil)))))
-                    )
+                 (when uniformh
+                  (loop for (u v) on uniforms by #'cddr
+                        for uu = (gethash u uniformh)
+                        for (ui nil nil ut) = uu
+                        do (when (and ui (not (minusp ui)))
+                             (ecase ut
+                               (:float (gl:uniformf ui v))
+                               ((:vec2 :vec3 :vec4)
+                                (gl:uniformfv ui v))
+                               (:mat4 (gl:uniform-matrix-4fv ui v nil)))))))
                (draw ()
                  (when batches
                    (setf itype
@@ -305,5 +306,4 @@ CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
   (let ((v (gl:get* :viewport)))
     (setf (dims state)
           (3b-glim::v4 (aref v 0) (aref v 1)
-                       (/ (aref v 2)) (/ (aref v 3)))))
-)
+                       (/ (aref v 2)) (/ (aref v 3))))))
