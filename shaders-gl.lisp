@@ -63,9 +63,28 @@
          (pp (* proj mv-pos))
          (bary (vec4 0)))
     (case mode
-      (0 ;; tri/quad. do nothing, but test first in hopes of being faster
+      (0 ;; tri
+       ;; only need to set up barycentric coords for wireframe mode
+       (case (.z flags)
+         (0 (setf (.x bary) 1))
+         (1 (setf (.y bary) 1))
+         (2 (setf (.z bary) 1))
+         (t (setf (.w bary) 1)))
        ;; workaround for type inference bug
-       (setf dxy (vec4 1 1 0 0))
+       0)
+      (3 ;; quads
+       ;; only need to set up barycentric coords for wireframe mode
+       (case (.z flags)
+         (0 (setf (.xy bary) (vec2 -1 1)))
+         (1 (setf (.xy bary) (vec2 -1 -1)))
+         (2 (setf (.xy bary) (vec2 1 -1)))
+         (3 (setf (.xy bary) (vec2 1 1))))
+       (let ((w 1))
+        (setf (.xy bary) (* (.xy bary)
+                            w
+                            1))
+         (setf (.w bary) (/ line-width (.w pp))))
+       ;; workaround for type inference bug
        0)
       (1
        ;; points
@@ -198,15 +217,30 @@
       (discard))
     (return (* e (min (* ps ps) 1)))))
 
+(defun wire-quad (bary)
+  (let* ((d (fwidth (.xy bary)))
+         (w (.w bary))
+         (a (smooth-step (- 1 (+ (* d (max 1 w)) d))
+                         (- 1 (- (* d (max 1 w)) d)
+                            )
+                         (abs (.xy bary))))
+         (m (max (.x a) (.y a))))
+    (when (<= m 0 )
+      (discard))
+    (return (* m (min (* w w) 1)))))
+
+
 (defun smoothing (mode bary)
   (let ((a 1.0))
-    (case 1                             ; draw-flags
+    (case 2 ; draw-flags
       ;; normal
       (0 (setf a 1.0))
       ;; smooth
       (1 (case mode
-           (0 ;; tri/quad
-            (setf a 1.0))
+           (0 ;; tri
+            (setf a (max 0.1 (length bary))))
+           (3 ;; quad
+            (setf a (wire-quad bary)))
            (1 ;; points
             (setf a (smooth-point bary)))
            (2 ;; lines
@@ -214,6 +248,12 @@
            ;;
            (t (setf a 1.0))))
       ;; wireframe
+      (2
+       (case mode
+         (0 ;tri
+          (setf a 1.0))
+         (3 ;quad
+          (setf a (wire-quad bary)))))
       (t
        (setf a 1.0)))
     (return a)))

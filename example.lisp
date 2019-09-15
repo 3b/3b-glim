@@ -32,27 +32,30 @@
                (glim:color (s 4) (s 5) (s 6))
                (glim:tex-coord 0 1)
                (apply 'glim:vertex (aref v d))))
-      (let ((w 1.0))
+      (let ((w 20.0))
         (glim:point-size (+ 0 (random w)))
-         (glim:line-width (+ 0 (random w)))
+        #++(glim:line-width (+ 0 (random w)))
         #++(glim:line-width (expt 2 (- (log w 2) (random (log w 2)))))
         #++(glim:line-width (- w (log (random (expt 2.0 w)) 2)))
-        #++(glim:line-width (- 16 (expt (random (expt 2.0 16)) 1/4))))
+        (glim:line-width (- 16 (expt (random (expt 2.0 16)) 1/4))))
+      #++(glim:line-width 20)
       (glim:with-pushed-matrix (:modelview)
         (glim:scale 2 2 2)
        (glim:with-primitives :quads
          (glim:normal 0 0 1)
          (q 0 1 2 3)
-         (glim:normal 0 0 -1)
-         (q 5 6 7 4)
-         (glim:normal -1 0 0)
-         (q 4 0 3 7)
-         (glim:normal 1 0 0)
-         (q 1 2 6 5)
-         (glim:normal 0 1 0)
-         (q 3 2 6 7)
-         (glim:normal 0 -1 0)
-         (q 4 0 1 5))))))
+
+         (progn
+           (glim:normal 0 0 -1)
+           (q 5 6 7 4)
+           (glim:normal -1 0 0)
+           (q 4 0 3 7)
+           (glim:normal 1 0 0)
+           (q 1 2 6 5)
+           (glim:normal 0 1 0)
+           (q 3 2 6 7)
+           (glim:normal 0 -1 0)
+           (q 4 0 1 5)))))))
 
 (defmethod glut:display-window :before ((w 3b-glim-example))
   (3b-glim/gl:init-state/gl)
@@ -120,17 +123,22 @@
       (flet ((s (x)
                (* 0.1 (abs (sin (/ now x))))))
         (gl:clear-color (s 2) (s 3) (s 4) 1))
-      (gl:enable :blend :depth-test)
-      (gl:disable :cull-face :lighting :light0 :texture-2d #++ :depth-test)
+      (gl:enable :blend :depth-test
+                 :polygon-smooth)
+      (gl:disable :cull-face :lighting :light0 :texture-2d
+                  :polygon-smooth
+                             :depth-test)
       (gl:clear :color-buffer :depth-buffer)
+
       (gl:blend-func :src-alpha :one-minus-src-alpha)
+      #++(gl:blend-func :src-alpha :one)
 
       (glim:with-pushed-matrix (:modelview)
         (glim:matrix-mode :modelview)
         (glim:look-at '(0 0 4) '(0 0 0) '(0 1 0))
         (let ((*random-state* (make-random-state *rnd*)))
           (loop
-            for i below 1000
+            for i below 100
             do (glim:with-pushed-matrix (:modelview)
                  (glim:matrix-mode :modelview)
                  (progn
@@ -197,4 +205,3 @@
 (glut:show-window)
 #++
 (glut:main-loop)
-
