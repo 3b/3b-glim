@@ -43,9 +43,11 @@
         (glim:scale 2 2 2)
        (glim:with-primitives
            :quads
-           ;:triangles
-           ;:points
-           ;:lines
+           ;; :triangles
+           ;; :points
+           ;; :lines
+           ;; :triangle-strip
+           ;; :triangle-fan
          (glim:normal 0 0 1)
          (q 0 1 2 3)
          (progn

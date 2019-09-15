@@ -636,60 +636,71 @@
   (let ((primitive (car (primitive *state*)))
         (cv (current-vertex *state*)))
     (declare (type octet-vector cv))
-    (ecase primitive
-      ((:triangles)
-       (let ((o (car (gethash :flags (vertex-format *state*))))
-             (i (current-vertex-index)))
-         (declare (type u32 o i))
-         (setf (aref cv (+ o +corner-index-flag+))
-               (mod i 3)))
-       (let ((index (out* cv 0)))
-         (outi index)
-         (when (and (zerop (mod (1+ index) 3))
-                    (not (has-space-for-vertices 3)))
-           (overflow))
-         (unless (has-space-for-indices 3)
-           (overflow))))
-      (:triangle-strip
-       (let ((i (out* cv 0)))
-         ;; index 0 and 1 don't make a triangle, otherwise copy 2 indices
-         (when (> i 1)
-           (multiple-value-bind (f r) (floor i 2)
-             (outi (1- (* f 2)))
-             (outi (* 2 (+ f (- r 1))))))
-         (outi i)
-         (when (has-space-for-vertices 1)
-           (overflow))
-         (when (and (> i 1) (not (has-space-for-indices 3)))
-           (overflow))))
-      (:triangle-fan
-       (let ((i (out* cv 0)))
-         ;; index 0 and 1 don't make a triangle, otherwise copy 2 indices
-         (when (> i 1)
-           (outi 0)
-           (outi (1- i)))
-         (outi i)
-         (when (has-space-for-vertices 1)
-           (overflow))
-         (when (and (> i 1) (not (has-space-for-indices 3)))
-           (overflow))))
-      (:points
-       (write-vertex-point cv))
-      ;; :lines and line-strips are converted to quads if size /= 1 or if
-      ;;  smooth is on
-      (:lines
-       (write-vertex-line cv))
-      (:line-strip
-       (write-vertex-line-strip cv))
-      (:line-loop
-       ;; todo: needs to store state extra state across chunks to close
-       ;; loop
-       )
-      ;; :quads and :quad-strip are converted to tris / tri-strips
-      (:quads
-       (write-vertex-quad cv))
-      (:quad-strip
-       (write-vertex-quad-strip cv)))))
+    (flet ((tri-corner (&optional (i (current-vertex-index)))
+            (let ((o (car (gethash :flags (vertex-format *state*))))
+                  )
+               (declare (type u32 o i))
+               (setf (aref cv (+ o +corner-index-flag+))
+                     (mod i 3)))))
+     (ecase primitive
+       ((:triangles)
+        (tri-corner)
+        (let ((o (car (gethash :flags (vertex-format *state*))))
+              (i (current-vertex-index)))
+          (declare (type u32 o i))
+          (setf (aref cv (+ o +corner-index-flag+))
+                (mod i 3)))
+        (let ((index (out* cv 0)))
+          (outi index)
+          (when (and (zerop (mod (1+ index) 3))
+                     (not (has-space-for-vertices 3)))
+            (overflow))
+          (unless (has-space-for-indices 3)
+            (overflow))))
+       (:triangle-strip
+        (tri-corner)
+        (let ((i (out* cv 0)))
+          ;; index 0 and 1 don't make a triangle, otherwise copy 2 indices
+          (when (> i 1)
+            (multiple-value-bind (f r) (floor i 2)
+              (outi (1- (* f 2)))
+              (outi (* 2 (+ f (- r 1))))))
+          (outi i)
+          (unless (has-space-for-vertices 1)
+            (overflow))
+          (when (and (> i 1) (not (has-space-for-indices 3)))
+            (overflow))))
+       (:triangle-fan
+        (if (zerop (current-vertex-index))
+            (tri-corner 0)
+            (tri-corner (1+ (mod (current-vertex-index) 2))))
+        (let ((i (out* cv 0)))
+          ;; index 0 and 1 don't make a triangle, otherwise copy 2 indices
+          (when (> i 1)
+            (outi 0)
+            (outi (1- i)))
+          (outi i)
+          (unless (has-space-for-vertices 1)
+            (overflow))
+          (when (and (> i 1) (not (has-space-for-indices 3)))
+            (overflow))))
+       (:points
+        (write-vertex-point cv))
+       ;; :lines and line-strips are converted to quads if size /= 1 or if
+       ;;  smooth is on
+       (:lines
+        (write-vertex-line cv))
+       (:line-strip
+        (write-vertex-line-strip cv))
+       (:line-loop
+        ;; todo: needs to store state extra state across chunks to close
+        ;; loop
+        )
+       ;; :quads and :quad-strip are converted to tris / tri-strips
+       (:quads
+        (write-vertex-quad cv))
+       (:quad-strip
+        (write-vertex-quad-strip cv))))))
 
 
 (defun %vertex (x y z w)
