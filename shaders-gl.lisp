@@ -21,8 +21,8 @@
 (input flags :vec4 :location 7)
 
 (uniform mv :mat4) ;; model-view matrix
-;(uniform mvp :mat4) ;; model-view-projection matrix
-(uniform proj :mat4) ;; projection matrix
+;;(uniform mvp :mat4) ;; model-view-projection matrix
+(uniform proj :mat4)                    ;; projection matrix
 (uniform normal-matrix :mat4)
 (uniform tex-mode0 :int)
 (uniform tex-mode1 :int)
@@ -35,7 +35,7 @@
 
 (uniform line-width :float)
 (uniform point-size :float)
-(uniform draw-flags :int)
+(uniform draw-flags :vec4)
 (uniform light-position :vec3)
 
 (uniform dims :vec4)
@@ -81,17 +81,14 @@
          (2 (setf (.xy bary) (vec2 1 -1)))
          (3 (setf (.xy bary) (vec2 1 1))))
        (let ((w 1))
-         ;(setf (.xy bary) (.xy bary))
-         (setf (.zw bary)  (vec2 line-width))
-         #++(setf (.w bary) (* line-width (.w dims)))
-         )
+         (setf (.zw bary)  (vec2 line-width)))
        ;; workaround for type inference bug
        0)
       (1
        ;; points
        (let* ((dist (length (vec3 mv-pos)))
               (corner (.z flags))
-              (smooth1 (= 1 1))
+              (smooth1 (= 1 (.x draw-flags)))
               (s2 (+ point-size
                      (if smooth1 2 0)))
               (s1 (- s2)))
@@ -115,7 +112,7 @@
        0)
       (2 ;; line
        (let* ((dist (length (vec3 mv-pos)))
-              (smooth1 (= 1 1))
+              (smooth1 (= 1 (.x draw-flags)))
               (corner (.z flags))
               (mv-p2 (* mv (vec4 (.xyz tangent) 1)))
               (pp2 (* proj mv-p2))
@@ -169,7 +166,6 @@
        0)
       (t
        0))
-
     (setf gl-position (+ pp dxy))
     (setf (@ outs normal) (* (mat3 normal-matrix) normal)
           (@ outs position) (vec3 mv-pos)
@@ -194,8 +190,6 @@
          (mps (max 1.5 ps))
          (e (smooth-step (+ mps s) (- mps s) r))
          #++(e (step r ps)))
-    (when (<= e 0.0)
-      (discard))
     (return (* e (min ps 1)))))
 
 (defun smooth-line (bary)
@@ -216,8 +210,6 @@
          #++(e (if (< x (* 1 tl))
                    (step y (max 1 ps))
                    (step r (max 1 ps)))))
-    (when (<= e 0)
-      (discard))
     (return (* e (min ps 1)))))
 
 (defun wire-tri (bary)
@@ -229,8 +221,6 @@
                          (+ (* fw mw) d)
                          (.xyz bary)))
          (m (- 1 (min (.x a) (min (.y a) (.z a))))))
-    (when (<= m 0)
-      (discard))
     (return (* m 1 (min w 1)))))
 
 (defun wire-quad (bary)
@@ -242,23 +232,21 @@
                      (vec2 (max (.x dx) (.x dy))
                            (max (.y dx) (.y dy))))))
          #++(w2 (- 1 (* (max 1 (.w bary))
-                      (vec2 (max (.x dx) (.x dy))
-                            (max (.y dx) (.y dy))))
-                (- d)))
+                        (vec2 (max (.x dx) (.x dy))
+                              (max (.y dx) (.y dy))))
+                   (- d)))
          #++(a (step (vec2 (- 1 w))
                      (abs (.xy bary))))
          (a (smooth-step (- w1 d)
                          (+ w1 d)
                          (abs (.xy bary))))
          (m (max (.x a) (.y a))))
-    (when (<= m 0 )
-      (discard))
     (return (* m (min w 1)))))
 
 
-(defun smoothing (mode bary)
+(defun smoothing (flag mode bary)
   (let ((a 1.0))
-    (case 2 ; draw-flags
+    (case flag
       ;; normal
       (0 (setf a 1.0))
       ;; smooth
@@ -276,15 +264,16 @@
            ;;
            (t (setf a 1.0))))
       ;; wireframe
-      (2
+      ((2 3)
        (case mode
-         (0 ;tri
+         (0                             ;tri
           (setf a (wire-tri bary)))
-         (3 ;quad
+         (3                             ;quad
           (setf a (wire-quad bary)))))
       (t
        (setf a 1.0)))
     (return a)))
+
 (defun fragment ()
   (let* ((normal (normalize (@ ins normal)))
          ;;(eye-direction (normalize (@ ins eye-direction)))
@@ -304,9 +293,25 @@
                 (texture tex0-3 (.xyz uv)))
                (t
                 (vec4 1 1 1 1))))
-         (a (smoothing (.x (@ ins flags)) (@ ins bary))))
+         (mode (if gl-front-facing
+                   (.x draw-flags)
+                   (.y draw-flags)))
+         (a (smoothing mode (.x (@ ins flags)) (@ ins bary))))
     (declare (:float a))
     #++(setf color  (* (@ ins color) t0))
-    (setf color (vec4 (.xyz (@ ins color)) a))
+    (case mode
+      (3
+       (setf color (vec4 (mix (.xyz (@ ins color))
+                              (.xyz (@ ins color2))
+                              a)
+                         1)))
+      (t
+       (when (and (<= a 0.0) (/= mode 3))
+         (discard))
+       (setf color (vec4 (if gl-front-facing
+                             (.xyz (@ ins color))
+                             (.xyz (@ ins color2)))
+                         a))))
     #++ (setf color (vec4 a))
     #++(setf color (vec4 (vec3 (length (@ ins bary))) 1))))
+

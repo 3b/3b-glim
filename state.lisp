@@ -68,6 +68,7 @@
 (defconstant +draw-mode-normal+ 0)
 (defconstant +draw-mode-smooth+ 1)
 (defconstant +draw-mode-wireframe+ 2) ;; tris/quads only
+(defconstant +draw-mode-filled-wireframe+ 3) ;; tris/quads only
 
 ;; fog coord? texgen?
 (defparameter *default-vertex-format*
@@ -98,7 +99,9 @@
 (defun make-flags ()
   (alexandria:plist-hash-table
    '(:line-smooth nil
-     :point-smooth nil)))
+     :point-smooth nil
+     :wireframe nil
+     :filled-wireframe nil)))
 
 (defclass glim-state ()
   ;; size of buffer in vertices
@@ -137,6 +140,7 @@
                    :initform (alexandria:plist-hash-table
                               `(:front :ambient-and-diffuse
                                 :back :ambient-and-diffuse)))
+   (draw-flags :accessor draw-flags :initform #(0 0 0 0))
    ;; if set, called when buffer fills up, or at end of frame. passed
    ;; 1 argument containing draws since last call to draw callback or
    ;; to get-draws
@@ -193,6 +197,8 @@
   (setf (aref *index-buffer* *index-buffer-index*) index)
   (incf *index-buffer-index*))
 
+(defun get-flag (flag)
+  (gethash flag (flags *state*)))
 (defun notice-state-changed ())
 (defun enable (&rest flags)
   (loop with h = (flags *state*)
@@ -370,6 +376,7 @@
                 'proj (copy-seq (ensure-matrix :projection))
                 'line-width (current-line-width *state*)
                 'point-size (current-point-size *state*)
+                'draw-flags (draw-flags *state*)
                 'tex-mode0 +tex-mode-off+
                 'tex-mode1 +tex-mode-off+
                 'tex0-1 0
@@ -413,14 +420,50 @@
   (let ((prim-size (gethash primitive *primitives*))
         (o (car (gethash :flags (vertex-format *state*))))
         (cv (current-vertex *state*)))
-    (ecase primitive
-      (:points (setf (aref cv (+ o +prim-mode-flag+)) +point-flag+))
-      ((:lines :line-strip)
-       (setf (aref cv (+ o +prim-mode-flag+)) +line-flag+))
-      ((:triangles :triangle-fan :triangle-strip)
-       (setf (aref cv (+ o +prim-mode-flag+)) +triangle-flag+))
-      ((:quads :quad-strip)
-       (setf (aref cv (+ o +prim-mode-flag+)) +quad-flag+)))
+    (when (numberp (draw-flags *state*))
+      (print (draw-flags *state*))
+      (setf (draw-flags *state*) (v4 0 0 0 0)))
+    (macrolet ((df (flag mode &rest more)
+                 `(cond
+                    ,@ (loop for (f m) on (list* flag mode more) by 'cddr
+                             collect  `((get-flag ,f)
+                                        (setf (aref (draw-flags *state*) 0)
+                                              (float ,m 0.0))))
+                       (t (setf (aref (draw-flags *state*) 0)
+                                (float +draw-mode-normal+ 0.0)))))
+               (dfb (flag mode &rest more)
+                 `(cond
+                    ,@ (loop for (f m) on (list* flag mode more) by 'cddr
+                             collect  `((get-flag ,f)
+                                        (setf (aref (draw-flags *state*) 1)
+                                              (float ,m 0.0))))
+                       (t (setf (aref (draw-flags *state*) 1)
+                                (float +draw-mode-normal+ 0.0))))))
+      (ecase primitive
+        (:points
+         (setf (aref cv (+ o +prim-mode-flag+)) +point-flag+)
+        (df :point-smooth +draw-mode-smooth+))
+        ((:lines :line-strip)
+        (df :line-smooth +draw-mode-smooth+)
+        (setf (aref cv (+ o +prim-mode-flag+)) +line-flag+))
+       ((:triangles :triangle-fan :triangle-strip)
+        (setf (aref cv (+ o +prim-mode-flag+)) +triangle-flag+)
+        (df :filled-wireframe +draw-mode-filled-wireframe+
+            :wireframe +draw-mode-wireframe+)
+        (dfb :backface-fill +draw-mode-normal+
+             :backface-filled-wireframe +draw-mode-filled-wireframe+
+             :backface-wireframe +draw-mode-wireframe+
+             :filled-wireframe +draw-mode-filled-wireframe+
+             :wireframe +draw-mode-wireframe+))
+       ((:quads :quad-strip)
+        (df :filled-wireframe +draw-mode-filled-wireframe+
+             :wireframe +draw-mode-wireframe+)
+        (dfb :backface-fill +draw-mode-normal+
+             :backface-filled-wireframe +draw-mode-filled-wireframe+
+             :backface-wireframe +draw-mode-wireframe+
+             :filled-wireframe +draw-mode-filled-wireframe+
+             :wireframe +draw-mode-wireframe+)
+        (setf (aref cv (+ o +prim-mode-flag+)) +quad-flag+))))
     ;; todo: error messages
     (assert prim-size)
     (assert (not (primitive *state*)))
@@ -817,3 +860,36 @@
 (defun point-size (w)
   (setf (current-point-size *state*) (coerce w 'single-float)))
 
+(defun polygon-mode (face mode)
+  (ecase face
+    (:front
+     (ecase mode
+       ((:line :wireframe)
+        (setf (gethash :wireframe (flags *state*)) t)
+        (setf (gethash :filled-wireframe (flags *state*)) nil))
+       (:fill
+        (setf (gethash :wireframe (flags *state*)) nil)
+        (setf (gethash :filled-wireframe (flags *state*)) nil))
+       (:filled-wireframe
+        (setf (gethash :wireframe (flags *state*)) nil)
+        (setf (gethash :filled-wireframe (flags *state*)) t))
+       #++(:point
+        ;; todo ?
+           )))
+    (:back
+     (ecase mode
+       ((:line :wireframe)
+        (setf (gethash :backface-wireframe (flags *state*)) t)
+        (setf (gethash :backface-filled (flags *state*)) nil)
+        (setf (gethash :backface-filled-wireframe (flags *state*)) nil))
+       (:fill
+        (setf (gethash :backface-wireframe (flags *state*)) nil)
+        (setf (gethash :backface-filled (flags *state*)) t)
+        (setf (gethash :backface-filled-wireframe (flags *state*)) nil))
+       (:filled-wireframe
+        (setf (gethash :backface-wireframe (flags *state*)) nil)
+        (setf (gethash :backface-filled (flags *state*)) nil)
+        (setf (gethash :backface-filled-wireframe (flags *state*)) t))))
+    (:front-and-back
+     (polygon-mode :front mode)
+     (polygon-mode :back mode))))

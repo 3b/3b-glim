@@ -204,9 +204,13 @@ CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
                         for (ui nil nil ut) = uu
                         do (when (and ui (not (minusp ui)))
                              (ecase ut
+                               (:int
+                                (gl:uniformi ui v))
                                (:float (gl:uniformf ui v))
                                ((:vec2 :vec3 :vec4)
-                                (gl:uniformfv ui v))
+                                (if (numberp v)
+                                    (gl:uniformf ui v 0 0 0)
+                                    (gl:uniformfv ui v)))
                                (:mat4 (gl:uniform-matrix-4fv ui v nil)))))))
                (draw ()
                  (when batches
@@ -240,8 +244,12 @@ CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
                                                          (car (gethash a c)))
                               (gl:enable-vertex-attrib-array i)))
                        (a 0 4 :vertex)
+                       (a 1 4 :texture0)
+                       (a 2 4 :texture1)
                        (a 3 4 :color)
+                       (a 4 3 :normal)
                        (a 5 4 :tangent+width)
+                       (a 6 3 :secondary-color)
                        (a 7 4 :flags :byte)))
                    (loop for (p base start count uniforms)
                            in (nreverse (shiftf batches nil))

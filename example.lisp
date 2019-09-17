@@ -9,7 +9,14 @@
                      :mode '(:double :rgb :depth :multisample)
                      :right-menu '(:click :exit)))
 
-
+(defvar *primitives*
+  #(:points :lines :line-strip :triangles :triangle-strip
+    :triangle-fan :quads :quad-strip))
+(defparameter *primitive* 0)
+(defparameter *1-face* nil)
+(defparameter *smooth* t)
+(defparameter *low* nil)
+(defparameter *back* nil)
 (defun solid-cube (&optional (x1 1))
   (declare (ignorable x1))
   (let ((v #((-1 -1 1) (1 -1 1) (1 1 1) (-1 1 1)
@@ -38,29 +45,33 @@
         #++(glim:line-width (expt 2 (- (log w 2) (random (log w 2)))))
         #++(glim:line-width (- w (log (random (expt 2.0 w)) 2)))
         #++(glim:line-width (- 16 (expt (random (expt 2.0 16)) 1/4))))
-      ;(glim:line-width 10)
+    ;  (glim:line-width 10)
+      (if *smooth*
+          (progn
+            (glim:enable :line-smooth :point-smooth)
+            (glim:polygon-mode :front-and-back :wireframe))
+          (progn
+            (glim:disable :line-smooth :point-smooth)
+            (glim:polygon-mode :front-and-back :fill)))
+      (when *back*
+        (glim:polygon-mode :back :filled-wireframe))
+
       (glim:with-pushed-matrix (:modelview)
         (glim:scale 2 2 2)
-       (glim:with-primitives
-           :quads
-           ;; :triangles
-           ;; :points
-           ;; :lines
-           ;; :triangle-strip
-           ;; :triangle-fan
+       (glim:with-primitives (aref *primitives* *primitive*)
          (glim:normal 0 0 1)
          (q 0 1 2 3)
-         (progn
+         (unless *1-face*
            (glim:normal 0 0 -1)
-           (q 5 6 7 4)
+           (q 4 7 6 5)
            (glim:normal -1 0 0)
            (q 4 0 3 7)
            (glim:normal 1 0 0)
-           (q 1 2 6 5)
+           (q 1 5 6 2)
            (glim:normal 0 1 0)
            (q 3 2 6 7)
            (glim:normal 0 -1 0)
-           (q 4 0 1 5)))))))
+           (q 4 5 1 0)))))))
 
 (defmethod glut:display-window :before ((w 3b-glim-example))
   (3b-glim/gl:init-state/gl)
@@ -132,23 +143,26 @@
                  :polygon-smooth :sample-alpha-to-coverage)
       (gl:disable :cull-face :lighting :light0 :texture-2d
                   ;;:polygon-smooth
-                 ; :blend
-                 ;:sample-alpha-to-coverage
-                             #++ :depth-test)
+                                        ; :blend
+                                        ;:sample-alpha-to-coverage
+                  #++ :depth-test)
       (gl:clear :color-buffer :depth-buffer)
 
       (gl:blend-func :src-alpha :one-minus-src-alpha)
-      ;(gl:blend-func :src-alpha :one)
+                                        ;(gl:blend-func :src-alpha :one)
       #++(gl:blend-func :src-alpha :one)
       (gl:enable :multisample)
       #++(format t "~s ~s~%"(gl:get* :sample-buffers)
-              (gl:get* :samples))
+                 (gl:get* :samples))
+      (glim:secondary-color (* 0.5 (+ 1 (sin now)))
+                            (* 0.5 (+ 1 (sin (* 2 now))))
+                            (* 0.5 (+ 1 (sin (* 3 now)))))
       (glim:with-pushed-matrix (:modelview)
         (glim:matrix-mode :modelview)
         (glim:look-at '(0 0 4) '(0 0 0) '(0 1 0))
         (let ((*random-state* (make-random-state *rnd*)))
           (loop
-            for i below 100
+            for i below (if *low* 100 1000)
             do (glim:with-pushed-matrix (:modelview)
                  (glim:matrix-mode :modelview)
                  (progn
@@ -191,6 +205,14 @@
 (defmethod glut:keyboard ((window 3b-glim-example) key x y)
   (declare (ignore x y))
   (case key
+    (#\1 (setf *1-face* (not *1-face*)))
+    (#\2 (setf *smooth* (not *smooth*))
+     (format t "~&smooth = ~s~%" *smooth*))
+    (#\3 (setf *back* (not *back*)))
+    (#\4 (setf *low* (not *low*)))
+    (#\p (setf *primitive* (mod (1+ *primitive*) (length *primitives*)))
+     (format t "~&primitive = ~s~%"
+             (aref *primitives* *primitive*)))
     (#\space (setf *anim* (not *anim*)))
     (#\Esc
      (glut:destroy-current-window))))

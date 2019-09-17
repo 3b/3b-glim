@@ -62,4 +62,4 @@
    ;;   #:line-width  #:point-size
    ;; from other groups
 
-))
+#:polygon-mode))
