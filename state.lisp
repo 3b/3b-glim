@@ -77,10 +77,10 @@
   '(:vertex (4 4)
                                         ;:fog-coord (1 4)
     :texture0 (4 4)
-    :texture1 (4 4)
-    ;; only supporting 2 textures for now, probably don't even need that
-                                        ;:texture2 (4 4)
-                                        ;:texture3 (4 4)
+    ;; only supporting 1 textures for now
+    ;;:texture1 (4 4)
+    ;;:texture2 (4 4)
+    ;;:texture3 (4 4)
     :color (4 4)
     :normal (3 4)
     ;; stores extra data for generating line vertices
@@ -101,7 +101,10 @@
    '(:line-smooth nil
      :point-smooth nil
      :wireframe nil
-     :filled-wireframe nil)))
+     :filled-wireframe nil
+     :texture-1d nil
+     :texture-2d nil
+     :texture-3d nil)))
 
 (defclass glim-state ()
   ;; size of buffer in vertices
@@ -141,6 +144,7 @@
                               `(:front :ambient-and-diffuse
                                 :back :ambient-and-diffuse)))
    (draw-flags :accessor draw-flags :initform #(0 0 0 0))
+   (textures :reader textures :initform (make-array '(3) :initial-element nil))
    ;; if set, called when buffer fills up, or at end of frame. passed
    ;; 1 argument containing draws since last call to draw callback or
    ;; to get-draws
@@ -369,6 +373,7 @@
                (* 3
                   (floor (- *index-buffer-index* index-start)
                          3))
+               :textures (textures *state*)
                :uniforms
                ;; fixme: build this once and only store changes?
                (list
@@ -377,14 +382,12 @@
                 'line-width (current-line-width *state*)
                 'point-size (current-point-size *state*)
                 'draw-flags (draw-flags *state*)
-                'tex-mode0 +tex-mode-off+
+                'tex-mode0 (cond
+                             ((get-flag :texture-3d) +tex-mode-3d+)
+                             ((get-flag :texture-2d) +tex-mode-2d+)
+                             ((get-flag :texture-1d) +tex-mode-1d+)
+                             (t +tex-mode-off+))
                 'tex-mode1 +tex-mode-off+
-                'tex0-1 0
-                'tex1-1 0
-                'tex0-2 0
-                'tex1-2 0
-                'tex0-3 0
-                'tex1-3 0
                 'light-postion (v4 0 3 0 1)
                 ;; todo
                 ;; 'normal-matrix (??)
@@ -893,3 +896,8 @@
     (:front-and-back
      (polygon-mode :front mode)
      (polygon-mode :back mode))))
+
+(defun bind-texture (target name)
+  (setf (aref (textures *state*)
+              (ecase target (:texture-1d 0) (:texture-2d 1) (:texture-3d 2)))
+        name))

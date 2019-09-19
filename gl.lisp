@@ -185,7 +185,7 @@ CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
     (assert (member api '(:gl :gles)))
     (recompile-modified-shaders)
     (gl:use-program (shader config))
-    (setf *u* (list config))
+    (setf *u* (list config 3b-glim::*state*))
     (let* ((vbo (gl:gen-buffer))
            (ibo (gl:gen-buffer))
            (last-vb (list nil 0))
@@ -264,13 +264,21 @@ CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
         (3b-glim:map-draws
          (lambda (prim &key buffer start end base-index index-buffer
                          start-index index-count
-                         uniforms)
+                         uniforms textures)
            (declare (ignore start))
            (unless (and (vectorp buffer)
                         (vector index-buffer))
              (break "?"))
            (when *once*
              (format t "map ~s ~s ~s ~s~%" prim end base-index index-count))
+           (loop for i from 0
+                 for tx across textures
+                 for target in '(:texture-1d :texture-2d :texture-3d)
+                 for u in '(3b-glim:tex0-1 3b-glim:tex0-2 3b-glim::tex0-3)
+                 when tx
+                   do (gl:active-texture i)
+                      (gl:bind-texture target tx)
+                      (gl:uniformi (car (gethash u uniformh '(-1))) i))
            (unless (and (eql buffer (car last-vb))
                         (eql index-buffer (car last-ib)))
              (draw) (setf batches nil)

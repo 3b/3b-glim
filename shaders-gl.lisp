@@ -53,8 +53,6 @@
   (bary :vec4)
   (flags :vec4 :flat))
 
-
-
 (defun vertex ()
   (let* ((mv-pos (* mv position))
          (eye-dir (- (vec3 mv-pos)))
@@ -169,8 +167,9 @@
     (setf gl-position (+ pp dxy))
     (setf (@ outs normal) (* (mat3 normal-matrix) normal)
           (@ outs position) (vec3 mv-pos)
-          (@ outs uv) (.xyz texture0)
-          (@ outs uv2) (.xyz texture1)
+          (@ outs uv)#++(.xyz (* 0.5 (+ 1 (vec3 mv-pos))))
+                     (.xyz texture0)
+          ;(@ outs uv2) (.xyz texture1)
           (@ outs color) color
           (@ outs color2) secondary-color
           ;; interpolated lighting parameters
@@ -296,8 +295,10 @@
          (mode (if gl-front-facing
                    (.x draw-flags)
                    (.y draw-flags)))
-         (a (smoothing mode (.x (@ ins flags)) (@ ins bary))))
+         (a (smoothing mode (.x (@ ins flags)) (@ ins bary)))
+         (c (@ ins color)))
     (declare (:float a))
+    (setf c (* t0 c))
     #++(setf color  (* (@ ins color) t0))
     (case mode
       (3
@@ -309,9 +310,8 @@
        (when (and (<= a 0.0) (/= mode 3))
          (discard))
        (setf color (vec4 (if gl-front-facing
-                             (.xyz (@ ins color))
+                             (.xyz c)
                              (.xyz (@ ins color2)))
                          a))))
-    #++ (setf color (vec4 a))
+    #++(setf color (vec4 (.xyz t0) a))
     #++(setf color (vec4 (vec3 (length (@ ins bary))) 1))))
-

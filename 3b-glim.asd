@@ -37,6 +37,6 @@
   :components ((:file "vk")))
 
 (defsystem 3b-glim/example
-  :depends-on (3b-glim/gl cl-glut)
+  :depends-on (3b-glim/gl cl-glut pngload)
   :serial t
   :components ((:file "example")))

@@ -17,6 +17,8 @@
 (defparameter *smooth* t)
 (defparameter *low* nil)
 (defparameter *back* nil)
+(defparameter *tex* nil)
+
 (defun solid-cube (&optional (x1 1))
   (declare (ignorable x1))
   (let ((v #((-1 -1 1) (1 -1 1) (1 1 1) (-1 1 1)
@@ -73,6 +75,39 @@
            (glim:normal 0 -1 0)
            (q 4 5 1 0)))))))
 
+(defun load-textures ()
+  (format t "tex~%")
+  (setf *tex* (gl:gen-textures 3))
+  (gl:bind-texture :texture-1d (first *tex*))
+  (gl:tex-image-1d :texture-1d 0 :rgba 256 0
+                   :rgba :float
+                   (coerce (mapcar (lambda (a) (coerce a 'single-float))
+                                   (loop for i below 256
+                                         collect (sin (/ i 256))
+                                             collect (sin (/ i 128))
+                                            collect (sin (/ i 64))
+                                         collect 1))
+                           '(simple-array single-float 1)))
+  (gl:generate-mipmap :texture-1d)
+  (gl:pixel-store :unpack-alignment 1)
+  (gl:bind-texture :texture-2d (second *tex*))
+  (pngload:with-png-in-static-vector (p "e:/tmp/crate1_diffuse.png" :decode t)
+    (format t "2d ~s ~s ~s~%" (pngload:width p) (pngload:height p)
+            (type-of (pngload:data p)))
+    (gl:tex-image-2d :texture-2d 0 :rgb
+                     (pngload:width p) (pngload:height p)
+                     0
+                     :rgba :unsigned-short
+                     (static-vectors:static-vector-pointer (pngload:data p))))
+  (gl:generate-mipmap :texture-2d)
+  (gl:bind-texture :texture-3d (third *tex*))
+  (gl:tex-image-3d :texture-3d 0 :rgb
+                   64 64 64
+                   0
+                   :rgba :byte
+                   (cffi:null-pointer))
+  (gl:generate-mipmap :texture-3d))
+
 (defmethod glut:display-window :before ((w 3b-glim-example))
   (3b-glim/gl:init-state/gl)
   (gl:clear-color 0 0 0 0)
@@ -83,6 +118,7 @@
   (glim:light-model :light-model-local-viewer 1)
   (glim:color-material :front :ambient-and-diffuse)
   (glim:enable :light0 :lighting :cull-face :depth-test)
+  (load-textures)
   (setf (shaders w) (3b-glim/gl:load-shaders)))
 
 (declaim (inline deg-to-rad rad-to-deg))
@@ -136,6 +172,12 @@
       (setf *r* glim::*state*)
       (glim:matrix-mode :modelview)
       (glim:load-identity)
+      (glim:bind-texture :texture-1d 1)
+      (glim:bind-texture :texture-2d 2)
+      (glim:bind-texture :texture-3d 3)
+      (glim:enable :texture-1d)
+      (glim:enable :texture-2d)
+      (glim:disable :texture-3d)
       (flet ((s (x)
                (* 0.1 (abs (sin (/ now x))))))
         (gl:clear-color (s 2) (s 3) (s 4) 1))
