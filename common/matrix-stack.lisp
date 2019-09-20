@@ -1,4 +1,4 @@
-(in-package #:3b-glim)
+(in-package #:3b-glim/common)
 
 (defparameter *matrix-stacks* (make-hash-table))
 (defparameter *matrices* (make-hash-table))

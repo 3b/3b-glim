@@ -1,5 +1,5 @@
 (defpackage #:3b-glim
-  (:use :cl)
+  (:use :cl :3b-glim/common)
   (:export
    ;; buffering/state tracking
    #:*state*
