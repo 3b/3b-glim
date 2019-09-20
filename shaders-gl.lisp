@@ -59,7 +59,7 @@
   (let* ((mv-pos (* mv position))
          (eye-dir (- (vec3 mv-pos)))
          (mode (.x flags))
-         (dxy (vec4 0 0 0 0))
+         (dxy (vec2 0 0))
          (pp (* proj mv-pos))
          (bary (vec4 0))
 ;;; fixme: calculate and pass proper normal matrix from host
@@ -97,19 +97,19 @@
          (case corner
            (0
             (setf (.xyz bary) (vec3 s2 s1 point-size))
-            (setf dxy (vec4 1 -1 0 0)))
+            (setf dxy (vec2 1 -1)))
            (1
             (setf (.xyz bary) (vec3 s2 s2 point-size))
-            (setf dxy (vec4 1 1 0 0)))
+            (setf dxy (vec2 1 1)))
            (2
             (setf (.xyz bary) (vec3 s1 s2 point-size))
-            (setf dxy (vec4 -1 1 0 0)))
+            (setf dxy (vec2 -1 1)))
            (3
             (setf (.xyz bary) (vec3 s1 s1 point-size))
-            (setf dxy (vec4 -1 -1 0 0)))
+            (setf dxy (vec2 -1 -1)))
            (t
-            (setf dxy (vec4 33 33 0 0))))
-         (setf (.xy dxy) (* (.zw dims) s2 (.xy dxy)))
+            (setf dxy (vec2 33 33))))
+         (setf dxy (* (.zw dims) s2 dxy))
          (setf dxy (* dxy (.w pp))))
        0)
       (2 ;; line
@@ -138,24 +138,23 @@
                  (3
                   (setf tx (- tx))
                   (setf bary (vec4 (+ s2 tl) s1 lw tl))))
-               (setf dxy (vec4 (+ tx ty) 0 0)))
+               (setf dxy (+ tx ty)))
              (progn
                (case corner
                  (1
                   (setf tx (- tx)))
                  (3
                   (setf tx (- tx))))
-               (setf dxy (vec4 (normalize (.xy tx)) 0 0))))
-         (setf (.xy dxy) (* s2 (.xy dxy)))
+               (setf dxy (normalize (.xy tx)))))
+         (setf dxy (* s2 dxy))
          (when (< (abs (length dxy)) 2)
            (setf dxy (* 2 (normalize dxy))))
-         (setf (.xy dxy)
-               (* (.zw dims) (.xy dxy)))
+         (setf dxy (* (.zw dims) dxy))
          (setf dxy (* dxy (.w pp))))
        0)
       (t
        0))
-    (setf gl-position (+ pp dxy))
+    (setf gl-position (vec4 (+ (.xy pp) dxy) (.zw pp)))
     (setf (@ outs normal) (* nm normal)
           (@ outs position) (vec3 mv-pos)
           (@ outs uv) (.xyz texture0)
@@ -226,33 +225,31 @@
 
 
 (defun smoothing (draw-flag primitive bary)
-  (let ((a 1.0))
-    (case draw-flag
-      ;; normal
-      (0 (setf a 1.0)
-       (return a))
-      ;; smooth
-      (1 (case primitive
-           (0 ;; tri
-            (setf a 1.0))
-           (3 ;; quad
-            (setf a 1.0))
-           (1 ;; points
-            (setf a (smooth-point bary)))
-           (2 ;; lines
-            (setf a (smooth-line bary)))
-           ;;
-           (t (setf a 1.0))))
-      ;; wireframe
-      ((2 3)
-       (case primitive
-         (0                             ;tri
-          (setf a (wire-tri bary)))
-         (3                             ;quad
-          (setf a (wire-quad bary)))))
-      (t
-       (setf a 1.0)))
-    (return a)))
+  (case draw-flag
+    ;; normal
+    (0 (return 1.0))
+    ;; smooth
+    (1 (case primitive
+         (0 ;; tri
+          (return 1.0))
+         (3 ;; quad
+          (return 1.0))
+         (1 ;; points
+          (return (smooth-point bary)))
+         (2 ;; lines
+          (return (smooth-line bary)))
+         ;;
+         (t (return 1.0))))
+    ;; wireframe
+    ((2 3)
+     (case primitive
+       (0                             ;tri
+        (return (wire-tri bary)))
+       (3                             ;quad
+        (return (wire-quad bary)))))
+    (t
+     (return 1.0)))
+  (return 1.0))
 
 (defun ambient-m ()
   ;; todo: check face, material uniforms
@@ -285,37 +282,32 @@
   ;; todo: check uniforms
   (return (vec4 0.2 0.2 0.2 1)))
 
-(defun ldelta (p1 p2)
-  (when (and (zerop (.w p1)) (zerop (.w p2)))
-    (return (normalize (- (.xyz p2) (.xyz p1)))))
-  (when (zerop (.w p1))
-    (return (- (normalize (.xyz p2)))))
-  (when (zerop (.w p2))
-    (return (normalize (.xyz p1))))
-  (return (normalize (- (.xyz p2) (.xyz p1)))))
-
-(defun light (l n p eye acm dcm scm)
+(defun light (l n v eye acm dcm scm)
   (let* ((acli (@ (aref lights l) ambient))
          (dcli (@ (aref lights l) diffuse))
          (scli (@ (aref lights l) specular))
          (pli (@ (aref lights l) position))
-         (v (vec4 p 1))
-         (vpli (ldelta v pli))
+         (vpli (if (zerop (.w pli))
+                   (normalize (- (.xyz pli) v))
+                   (normalize (.xyz pli))))
          (ndotvp (max 0 (dot n vpli)))
-         (fi (if (= ndotvp 0) 0 1))
          (h (normalize (+ eye vpli)))
          (atti (@ (aref lights l) attenuation))
          (att 1.0)
-         (srm 10.0))
+         (srm 10.0) ;; todo: get from uniform
+         (spec (vec4 0)))
     (unless (zerop (.w pli))
-      (let ((d (length (- (.xyz v) (.xyz pli)))))
+      (let ((d (length (- v (.xyz pli)))))
         (setf att (/ (dot (vec3 1 d (* d d)) atti)))))
     ;; todo: spot
+    (unless (= ndotvp 0)
+      (setf spec
+            (* (expt (max 0 (dot n h)) srm) scm scli)))
     (return
       (* att
          (+ (* acm acli)
             (* ndotvp dcm dcli)
-            (* fi (expt (max 0 (dot n h)) srm) scm scli))))))
+            spec)))))
 
 (defun fragment ()
   (let* ((normal (normalize (@ ins normal)))
