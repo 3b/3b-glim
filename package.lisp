@@ -57,10 +57,11 @@
    #:tex-mode0 #:tex-mode1
    #:tex0-1 #:tex0-2 #:tex0-3
    #:tex1-1 #:tex1-2 #:tex1-3
-   #:light-position #:draw-flags
+   #:lights-enabled #:lights #:draw-flags
    ;; also
    ;;   #:line-width  #:point-size
    ;; from other groups
 
    #:polygon-mode
-   #:bind-texture))
+   #:bind-texture
+   #:light))

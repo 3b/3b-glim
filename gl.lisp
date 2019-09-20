@@ -47,7 +47,8 @@
 
 (defclass glim-gl-state ()
   ((shader :accessor shader :initarg :shader)
-   (uniforma :accessor uniforms :initform (make-hash-table))
+   (uniforms :accessor uniforms :initform (make-hash-table))
+   (light-uniforms :accessor light-uniforms :initform ())
    (batching :reader batching :initform :simple :initarg :batching)
    (ssbo :reader ssbo :initform nil :initarg :ssbo)
    (api :reader api :initarg :api)
@@ -143,6 +144,25 @@
 (setf 3bgl-shaders::*print-shaders* t)
 
 
+(defun get-light-unforms (config)
+  (setf (light-uniforms config) nil)
+  (when (shader config)
+    (flet ((u (i n)
+             (gl:get-uniform-location
+              (shader config)
+              (format nil "lights[~a].~a" i n))))
+      (setf (light-uniforms config)
+            (coerce
+             (loop for i below 3b-glim::+max-lights+
+                   collect (u i "position")
+                   collect (u i "ambient")
+                   collect (u i "diffuse")
+                   collect (u i "specular")
+                   collect (u i "spotDir")
+                   collect (u i "spotParams")
+                   collect (u i "attenuation"))
+             'vector)))))
+
 (defun load-shaders ()
   "Loads shaders used by glim into current GL context. Must call
 CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
@@ -157,7 +177,9 @@ CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
               (shader config)
               '3b-glim/gl-shaders:vertex
               '3b-glim/gl-shaders:fragment
-              :version 330)))))
+              :version 330)))
+    (setf (light-uniforms config)
+          (get-light-unforms config))))
 
 (defun recompile-modified-shaders ()
   (let* ((m *modified-shader-functions*)
@@ -241,11 +263,11 @@ CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
                      (flet ((a (i n a &optional (type :float))
                               (%gl:vertex-attrib-pointer i n type nil
                                                          s
-                                                         (car (gethash a c)))
+                                                         (car (gethash a c '(-1))))
                               (gl:enable-vertex-attrib-array i)))
                        (a 0 4 :vertex)
                        (a 1 4 :texture0)
-                       (a 2 4 :texture1)
+                       ;(a 2 4 :texture1)
                        (a 3 4 :color)
                        (a 4 3 :normal)
                        (a 5 4 :tangent+width)
@@ -264,7 +286,7 @@ CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
         (3b-glim:map-draws
          (lambda (prim &key buffer start end base-index index-buffer
                          start-index index-count
-                         uniforms textures)
+                         uniforms textures lighting)
            (declare (ignore start))
            (unless (and (vectorp buffer)
                         (vector index-buffer))
@@ -278,7 +300,13 @@ CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
                  when tx
                    do (gl:active-texture i)
                       (gl:bind-texture target tx)
-                      (gl:uniformi (car (gethash u uniformh '(-1))) i))
+                      (when uniformh
+                        (gl:uniformi (car (gethash u uniformh '(-1))) i)))
+           (when (and (light-uniforms config) lighting)
+             (loop for i across lighting
+                   for u across (light-uniforms config)
+                   when (plusp u)
+                     do (gl:uniformfv u i)))
            (unless (and (eql buffer (car last-vb))
                         (eql index-buffer (car last-ib)))
              (draw) (setf batches nil)

@@ -53,7 +53,7 @@
    *current-matrix*
    (sb-cga:matrix*
     *current-matrix*
-    (sb-cga:rotate-around (sb-cga:vec (f x) (f y) (f z))
+    (sb-cga:rotate-around (sb-cga:normalize (sb-cga:vec (f x) (f y) (f z)))
                           (deg-to-rad (f theta))))))
 
 (defun translate (x y z)

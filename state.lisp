@@ -22,11 +22,16 @@
 (defvar *index-buffer-index* 0)
 
 
-(declaim (inline f c4 v4))
+(declaim (inline f c4 v3 v4))
 (defun f (x) (coerce x 'single-float))
+(deftype v3 () '(simple-array single-float (3)))
+(deftype v4 () '(simple-array single-float (4)))
 (defun c4 (r &optional (g 0.0) (b 0.0) (a 1.0))
   (make-array 4 :element-type 'single-float
                 :initial-contents (list (f r) (f g) (f b) (f a))))
+(defun v3 (x &optional (y 0.0) (z 0.0))
+  (make-array 3 :element-type 'single-float
+                :initial-contents (list (f x) (f y) (f z))))
 (defun v4 (x &optional (y 0.0) (z 0.0) (w 1.0))
   (make-array 4 :element-type 'single-float
                 :initial-contents (list (f x) (f y) (f z) (f w))))
@@ -67,8 +72,10 @@
 ;; values for +draw-flag-mode+
 (defconstant +draw-mode-normal+ 0)
 (defconstant +draw-mode-smooth+ 1)
-(defconstant +draw-mode-wireframe+ 2) ;; tris/quads only
+(defconstant +draw-mode-wireframe+ 2)        ;; tris/quads only
 (defconstant +draw-mode-filled-wireframe+ 3) ;; tris/quads only
+;; lighting stuff
+(defconstant +max-lights+ 4)
 
 ;; fog coord? texgen?
 (defparameter *default-vertex-format*
@@ -104,7 +111,21 @@
      :filled-wireframe nil
      :texture-1d nil
      :texture-2d nil
-     :texture-3d nil)))
+     :texture-3d nil
+     :light0 nil
+     :light1 nil
+     :light2 nil
+     :light3 nil
+     :lighting nil)))
+
+(defstruct (light (:type vector))
+  (position (v4 0 0 1 0))
+  (ambient (v4 0 0 0 1))
+  (diffuse (v4 0 0 0 1))
+  (specular (v4 0 0 0 1))
+  (spot-dir (v3 0 0 -1))
+  (spot-params (v3 0 180 0))
+  (attenuation (v3 1 0 0)))
 
 (defclass glim-state ()
   ;; size of buffer in vertices
@@ -143,6 +164,12 @@
                    :initform (alexandria:plist-hash-table
                               `(:front :ambient-and-diffuse
                                 :back :ambient-and-diffuse)))
+   (lights :reader lights
+           :initform (vector
+                      (make-light :diffuse (v4 1 1 1 1) :specular (v4 1 1 1 1))
+                      (make-light)
+                      (make-light)
+                      (make-light)))
    (draw-flags :accessor draw-flags :initform #(0 0 0 0))
    (textures :reader textures :initform (make-array '(3) :initial-element nil))
    ;; if set, called when buffer fills up, or at end of frame. passed
@@ -357,42 +384,55 @@
     (let ((i (current-vertex-index))
           (base (/ start (vertex-size *state*))))
       ;; skip draw if we don't have a full primitive
-      (when (>= i 3)
-        ;; for now drawing everything as triangles
-        (vector-push-extend
-         (list :triangles
-               :buffer buffer
-               ;; not sure these are needed, but might be able to
-               ;; upload less
-               :start start :end *buffer-index*
-               :base-index base
-               :index-buffer index-buffer
-               :start-index index-start
-               :index-count
-               ;; skip any partial triangles at end
-               (* 3
-                  (floor (- *index-buffer-index* index-start)
-                         3))
-               :textures (textures *state*)
-               :uniforms
-               ;; fixme: build this once and only store changes?
-               (list
-                'mv (copy-seq (ensure-matrix :modelview))
-                'proj (copy-seq (ensure-matrix :projection))
-                'line-width (current-line-width *state*)
-                'point-size (current-point-size *state*)
-                'draw-flags (draw-flags *state*)
-                'tex-mode0 (cond
-                             ((get-flag :texture-3d) +tex-mode-3d+)
-                             ((get-flag :texture-2d) +tex-mode-2d+)
-                             ((get-flag :texture-1d) +tex-mode-1d+)
-                             (t +tex-mode-off+))
-                'tex-mode1 +tex-mode-off+
-                'light-postion (v4 0 3 0 1)
-                ;; todo
-                ;; 'normal-matrix (??)
-                ))
-         (draws *state*)))
+      (flet ((f (f) (get-flag f))
+             (fi (f) (if (get-flag f) 1 0)))
+        (when (>= i 3)
+          ;; for now drawing everything as triangles
+          (vector-push-extend
+           (list :triangles
+                 :buffer buffer
+                 ;; not sure these are needed, but might be able to
+                 ;; upload less
+                 :start start :end *buffer-index*
+                 :base-index base
+                 :index-buffer index-buffer
+                 :start-index index-start
+                 :index-count
+                 ;; skip any partial triangles at end
+                 (* 3
+                    (floor (- *index-buffer-index* index-start)
+                           3))
+                 :textures (textures *state*)
+                 ;; fixme: copy this when it changes
+                 :lighting (when (f :lighting)
+                             (concatenate 'vector
+                                          (aref (lights *state*) 0)
+                                          (aref (lights *state*) 1)
+                                          (aref (lights *state*) 2)
+                                          (aref (lights *state*) 3)))
+                 :uniforms
+                 ;; fixme: build this once and only store changes?
+                 (list
+                  'mv (copy-seq (ensure-matrix :modelview))
+                  'proj (copy-seq (ensure-matrix :projection))
+                  'line-width (current-line-width *state*)
+                  'point-size (current-point-size *state*)
+                  'draw-flags (draw-flags *state*)
+                  'tex-mode0 (cond
+                               ((get-flag :texture-3d) +tex-mode-3d+)
+                               ((get-flag :texture-2d) +tex-mode-2d+)
+                               ((get-flag :texture-1d) +tex-mode-1d+)
+                               (t +tex-mode-off+))
+                  'tex-mode1 +tex-mode-off+
+                  'light-postion (v4 0 3 0 1)
+                  'lights-enabled (if (f :lighting)
+                                      (vector (fi :light0) (fi :light1)
+                                              (fi :light2) (fi :light3))
+                                      (vector 0 0 0 0))
+                  ;; todo
+                  ;; 'normal-matrix (??)
+                  ))
+           (draws *state*))))
       (setf (%primitive *state*) nil))))
 
 (defun set-primitive (primitive size &optional (start *buffer-index*)
@@ -445,28 +485,28 @@
       (ecase primitive
         (:points
          (setf (aref cv (+ o +prim-mode-flag+)) +point-flag+)
-        (df :point-smooth +draw-mode-smooth+))
+         (df :point-smooth +draw-mode-smooth+))
         ((:lines :line-strip)
-        (df :line-smooth +draw-mode-smooth+)
-        (setf (aref cv (+ o +prim-mode-flag+)) +line-flag+))
-       ((:triangles :triangle-fan :triangle-strip)
-        (setf (aref cv (+ o +prim-mode-flag+)) +triangle-flag+)
-        (df :filled-wireframe +draw-mode-filled-wireframe+
-            :wireframe +draw-mode-wireframe+)
-        (dfb :backface-fill +draw-mode-normal+
-             :backface-filled-wireframe +draw-mode-filled-wireframe+
-             :backface-wireframe +draw-mode-wireframe+
-             :filled-wireframe +draw-mode-filled-wireframe+
-             :wireframe +draw-mode-wireframe+))
-       ((:quads :quad-strip)
-        (df :filled-wireframe +draw-mode-filled-wireframe+
+         (df :line-smooth +draw-mode-smooth+)
+         (setf (aref cv (+ o +prim-mode-flag+)) +line-flag+))
+        ((:triangles :triangle-fan :triangle-strip)
+         (setf (aref cv (+ o +prim-mode-flag+)) +triangle-flag+)
+         (df :filled-wireframe +draw-mode-filled-wireframe+
              :wireframe +draw-mode-wireframe+)
-        (dfb :backface-fill +draw-mode-normal+
-             :backface-filled-wireframe +draw-mode-filled-wireframe+
-             :backface-wireframe +draw-mode-wireframe+
-             :filled-wireframe +draw-mode-filled-wireframe+
+         (dfb :backface-fill +draw-mode-normal+
+              :backface-filled-wireframe +draw-mode-filled-wireframe+
+              :backface-wireframe +draw-mode-wireframe+
+              :filled-wireframe +draw-mode-filled-wireframe+
+              :wireframe +draw-mode-wireframe+))
+        ((:quads :quad-strip)
+         (df :filled-wireframe +draw-mode-filled-wireframe+
              :wireframe +draw-mode-wireframe+)
-        (setf (aref cv (+ o +prim-mode-flag+)) +quad-flag+))))
+         (dfb :backface-fill +draw-mode-normal+
+              :backface-filled-wireframe +draw-mode-filled-wireframe+
+              :backface-wireframe +draw-mode-wireframe+
+              :filled-wireframe +draw-mode-filled-wireframe+
+              :wireframe +draw-mode-wireframe+)
+         (setf (aref cv (+ o +prim-mode-flag+)) +quad-flag+))))
     ;; todo: error messages
     (assert prim-size)
     (assert (not (primitive *state*)))
@@ -683,70 +723,69 @@
         (cv (current-vertex *state*)))
     (declare (type octet-vector cv))
     (flet ((tri-corner (&optional (i (current-vertex-index)))
-            (let ((o (car (gethash :flags (vertex-format *state*))))
-                  )
+             (let ((o (car (gethash :flags (vertex-format *state*)))))
                (declare (type u32 o i))
                (setf (aref cv (+ o +corner-index-flag+))
                      (mod i 3)))))
-     (ecase primitive
-       ((:triangles)
-        (tri-corner)
-        (let ((o (car (gethash :flags (vertex-format *state*))))
-              (i (current-vertex-index)))
-          (declare (type u32 o i))
-          (setf (aref cv (+ o +corner-index-flag+))
-                (mod i 3)))
-        (let ((index (out* cv 0)))
-          (outi index)
-          (when (and (zerop (mod (1+ index) 3))
-                     (not (has-space-for-vertices 3)))
-            (overflow))
-          (unless (has-space-for-indices 3)
-            (overflow))))
-       (:triangle-strip
-        (tri-corner)
-        (let ((i (out* cv 0)))
-          ;; index 0 and 1 don't make a triangle, otherwise copy 2 indices
-          (when (> i 1)
-            (multiple-value-bind (f r) (floor i 2)
-              (outi (1- (* f 2)))
-              (outi (* 2 (+ f (- r 1))))))
-          (outi i)
-          (unless (has-space-for-vertices 1)
-            (overflow))
-          (when (and (> i 1) (not (has-space-for-indices 3)))
-            (overflow))))
-       (:triangle-fan
-        (if (zerop (current-vertex-index))
-            (tri-corner 0)
-            (tri-corner (1+ (mod (current-vertex-index) 2))))
-        (let ((i (out* cv 0)))
-          ;; index 0 and 1 don't make a triangle, otherwise copy 2 indices
-          (when (> i 1)
-            (outi 0)
-            (outi (1- i)))
-          (outi i)
-          (unless (has-space-for-vertices 1)
-            (overflow))
-          (when (and (> i 1) (not (has-space-for-indices 3)))
-            (overflow))))
-       (:points
-        (write-vertex-point cv))
-       ;; :lines and line-strips are converted to quads if size /= 1 or if
-       ;;  smooth is on
-       (:lines
-        (write-vertex-line cv))
-       (:line-strip
-        (write-vertex-line-strip cv))
-       (:line-loop
-        ;; todo: needs to store state extra state across chunks to close
-        ;; loop
-        )
-       ;; :quads and :quad-strip are converted to tris / tri-strips
-       (:quads
-        (write-vertex-quad cv))
-       (:quad-strip
-        (write-vertex-quad-strip cv))))))
+      (ecase primitive
+        ((:triangles)
+         (tri-corner)
+         (let ((o (car (gethash :flags (vertex-format *state*))))
+               (i (current-vertex-index)))
+           (declare (type u32 o i))
+           (setf (aref cv (+ o +corner-index-flag+))
+                 (mod i 3)))
+         (let ((index (out* cv 0)))
+           (outi index)
+           (when (and (zerop (mod (1+ index) 3))
+                      (not (has-space-for-vertices 3)))
+             (overflow))
+           (unless (has-space-for-indices 3)
+             (overflow))))
+        (:triangle-strip
+         (tri-corner)
+         (let ((i (out* cv 0)))
+           ;; index 0 and 1 don't make a triangle, otherwise copy 2 indices
+           (when (> i 1)
+             (multiple-value-bind (f r) (floor i 2)
+               (outi (1- (* f 2)))
+               (outi (* 2 (+ f (- r 1))))))
+           (outi i)
+           (unless (has-space-for-vertices 1)
+             (overflow))
+           (when (and (> i 1) (not (has-space-for-indices 3)))
+             (overflow))))
+        (:triangle-fan
+         (if (zerop (current-vertex-index))
+             (tri-corner 0)
+             (tri-corner (1+ (mod (current-vertex-index) 2))))
+         (let ((i (out* cv 0)))
+           ;; index 0 and 1 don't make a triangle, otherwise copy 2 indices
+           (when (> i 1)
+             (outi 0)
+             (outi (1- i)))
+           (outi i)
+           (unless (has-space-for-vertices 1)
+             (overflow))
+           (when (and (> i 1) (not (has-space-for-indices 3)))
+             (overflow))))
+        (:points
+         (write-vertex-point cv))
+        ;; :lines and line-strips are converted to quads if size /= 1 or if
+        ;;  smooth is on
+        (:lines
+         (write-vertex-line cv))
+        (:line-strip
+         (write-vertex-line-strip cv))
+        (:line-loop
+         ;; todo: needs to store state extra state across chunks to close
+         ;; loop
+         )
+        ;; :quads and :quad-strip are converted to tris / tri-strips
+        (:quads
+         (write-vertex-quad cv))
+        (:quad-strip
+         (write-vertex-quad-strip cv))))))
 
 
 (defun %vertex (x y z w)
@@ -876,9 +915,10 @@
        (:filled-wireframe
         (setf (gethash :wireframe (flags *state*)) nil)
         (setf (gethash :filled-wireframe (flags *state*)) t))
-       #++(:point
+       #++
+       (:point
         ;; todo ?
-           )))
+        )))
     (:back
      (ecase mode
        ((:line :wireframe)
@@ -901,3 +941,49 @@
   (setf (aref (textures *state*)
               (ecase target (:texture-1d 0) (:texture-2d 1) (:texture-3d 2)))
         name))
+
+(defun light (light pname param)
+  (assert (< -1 light (length (lights *state*))))
+  (flet ((v3v () (map 'v3 'f param))
+         (v4v () (map 'v4 'f param)))
+    (ecase pname
+      (:position
+       ;; pos/dir are transformed to eye space by current mv matrix when
+       ;; set
+       (let* ((p (v4v))
+              (v (sb-cga:vec (aref p 0) (aref p 1) (aref p 2)))
+              (mv (ensure-matrix :modelview)))
+         (if (zerop (aref p 3))
+             (replace p (sb-cga:transform-direction v mv))
+             (replace p (sb-cga:transform-point v mv)))
+         (setf (light-position (aref (lights *state*) light))
+               p)))
+      (:ambient
+       (setf (light-ambient (aref (lights *state*) light))
+             (v4v)))
+      (:diffuse
+       (setf (light-diffuse (aref (lights *state*) light))
+             (v4v)))
+      (:specular
+       (setf (light-specular (aref (lights *state*) light))
+             (v4v)))
+      (:spot-direction
+       (let* ((p (v3v))
+              (mv (ensure-matrix :modelview)))
+         (setf (light-spot-dir (aref (lights *state*) light))
+               (sb-cga:transform-direction p mv))))
+      (:spot-exponent
+       (setf (aref (light-spot-params (aref (lights *state*) light)) 0)
+             (f param)))
+      (:spot-cutoff
+       (setf (aref (light-spot-params (aref (lights *state*) light)) 1)
+             (f param)))
+      (:constant-attenuation
+       (setf (aref (light-attenuation (aref (lights *state*) light)) 0)
+             (f param)))
+      (:linear-attenuation
+       (setf (aref (light-attenuation (aref (lights *state*) light)) 1)
+             (f param)))
+      (:quadratic-attenuation
+       (setf (aref (light-attenuation (aref (lights *state*) light)) 2)
+             (f param))))))

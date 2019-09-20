@@ -18,7 +18,7 @@
 (defparameter *low* nil)
 (defparameter *back* nil)
 (defparameter *tex* nil)
-
+(defparameter *sphere* nil)
 (defun solid-cube (&optional (x1 1))
   (declare (ignorable x1))
   (let ((v #((-1 -1 1) (1 -1 1) (1 1 1) (-1 1 1)
@@ -43,11 +43,11 @@
                (apply 'glim:vertex (aref v d))))
       (let ((w 16.0))
         (glim:point-size (+ 0 (random w)))
-       (glim:line-width (+ 0 (random w)))
+        (glim:line-width (+ 0 (random w)))
         #++(glim:line-width (expt 2 (- (log w 2) (random (log w 2)))))
         #++(glim:line-width (- w (log (random (expt 2.0 w)) 2)))
         #++(glim:line-width (- 16 (expt (random (expt 2.0 16)) 1/4))))
-    ;  (glim:line-width 10)
+      ;;(glim:line-width 10)
       (if *smooth*
           (progn
             (glim:enable :line-smooth :point-smooth)
@@ -60,20 +60,20 @@
 
       (glim:with-pushed-matrix (:modelview)
         (glim:scale 2 2 2)
-       (glim:with-primitives (aref *primitives* *primitive*)
-         (glim:normal 0 0 1)
-         (q 0 1 2 3)
-         (unless *1-face*
-           (glim:normal 0 0 -1)
-           (q 4 7 6 5)
-           (glim:normal -1 0 0)
-           (q 4 0 3 7)
-           (glim:normal 1 0 0)
-           (q 1 5 6 2)
-           (glim:normal 0 1 0)
-           (q 3 2 6 7)
-           (glim:normal 0 -1 0)
-           (q 4 5 1 0)))))))
+        (glim:with-primitives (aref *primitives* *primitive*)
+          (glim:normal 0 0 1)
+          (q 0 1 2 3)
+          (unless *1-face*
+            (glim:normal 0 0 -1)
+            (q 4 7 6 5)
+            (glim:normal -1 0 0)
+            (q 4 0 3 7)
+            (glim:normal 1 0 0)
+            (q 1 5 6 2)
+            (glim:normal 0 1 0)
+            (q 3 2 6 7)
+            (glim:normal 0 -1 0)
+            (q 4 5 1 0)))))))
 
 (defun load-textures ()
   (format t "tex~%")
@@ -84,8 +84,8 @@
                    (coerce (mapcar (lambda (a) (coerce a 'single-float))
                                    (loop for i below 256
                                          collect (sin (/ i 256))
-                                             collect (sin (/ i 128))
-                                            collect (sin (/ i 64))
+                                         collect (sin (/ i 128))
+                                         collect (sin (/ i 64))
                                          collect 1))
                            '(simple-array single-float 1)))
   (gl:generate-mipmap :texture-1d)
@@ -167,7 +167,11 @@
               (* 0.1 (- (/ (get-internal-real-time)
                            internal-time-units-per-second)
                         13000))
-              1230)))
+              1230))
+        (now2
+          (* 0.6 (- (/ (get-internal-real-time)
+                       internal-time-units-per-second)
+                    23000))))
     (glim:with-frame ()
       (setf *r* glim::*state*)
       (glim:matrix-mode :modelview)
@@ -184,14 +188,14 @@
       (gl:enable :blend :depth-test
                  :polygon-smooth :sample-alpha-to-coverage)
       (gl:disable :cull-face :lighting :light0 :texture-2d
-                  ;;:polygon-smooth
-                                        ; :blend
-                                        ;:sample-alpha-to-coverage
+                  ;; :polygon-smooth
+                  ;; :blend
+                  ;; :sample-alpha-to-coverage
                   #++ :depth-test)
       (gl:clear :color-buffer :depth-buffer)
 
       (gl:blend-func :src-alpha :one-minus-src-alpha)
-                                        ;(gl:blend-func :src-alpha :one)
+      ;;(gl:blend-func :src-alpha :one)
       #++(gl:blend-func :src-alpha :one)
       (gl:enable :multisample)
       #++(format t "~s ~s~%"(gl:get* :sample-buffers)
@@ -201,7 +205,25 @@
                             (* 0.5 (+ 1 (sin (* 3 now)))))
       (glim:with-pushed-matrix (:modelview)
         (glim:matrix-mode :modelview)
+        #++(glim:look-at '(0 0 4) '(0 0 0) '(0 1 0))
         (glim:look-at '(0 0 4) '(0 0 0) '(0 1 0))
+        (glim:light 0 :position (vector (* 8 (cos now2))
+                                        0
+                                        (* 8 (sin now2))
+                                        1))
+        (glim:light 0 :ambient '(0.1 0 0 1))
+        (glim:light 0 :diffuse '(1 0 1 1))
+        (glim:light 0 :specular '(0 0 1 1))
+
+        (glim:light 1 :position (vector (sin now2) -1 (cos now2) 1))
+        (glim:light 1 :ambient '(0 0 0 1))
+        (glim:light 1 :diffuse '(0 11 0 1))
+        (glim:light 1 :specular '(1 1 0 1))
+        (glim:light 1 :constant-attenuation 0.0)
+        (glim:light 1 :linear-attenuation 0.0)
+        (glim:light 1 :quadratic-attenuation 9.0)
+        (glim:enable :lighting :light0 :light1)
+
         (let ((*random-state* (make-random-state *rnd*)))
           (loop
             for i below (if *low* 100 1000)
@@ -222,7 +244,51 @@
                    (glim:rotate (* now 200)
                                 0 0 1)
                    (glim:scale 0.08 0.08 0.08))
-                 (solid-cube i))))))
+                 (solid-cube i)))
+          (glim:color 1 1 1 1)
+          (when *sphere*
+            (glim:with-pushed-matrix (:modelview)
+              (glim:matrix-mode :modelview)
+              (glim:scale 0.75 0.75 0.75)
+              (glim:rotate 60 -1 1 1)
+              (glim:line-width 6)
+              (glim:secondary-color 0.1 0.1 0.1)
+              (glim:disable :texture-2d)
+              (glim:disable :texture-1d)
+              (glim:with-primitives :quads
+                (flet ((v (x y z)
+                         (let ((n (sb-cga:normalize (sb-cga:vec x y z))))
+                           (glim:normal (aref n 0) (aref n 1) (aref n 2))
+                           (glim:vertex x y z 1)))
+                       (f (X) (coerce x 'single-float)))
+                  (loop with s = 16
+                        for i upto s
+                        for i2 = (1+ i)
+                        for x = (f (cos (* 2 i (/ pi s))))
+                        for y = (f (sin (* 2 i (/ pi s))))
+                        for x2 = (f (cos (* 2 i2 (/ pi s))))
+                        for y2 = (f (sin (* 2 i2 (/ pi s))))
+                        do (loop for j from 1 below s
+                                 for j2 = (1+ j)
+                                 for z = (f (cos (* j (/ pi s))))
+                                 for z2 = (f (cos (* j2 (/ pi s))))
+                                 for q = (f (sin (* j (/ pi s))))
+                                 for q2 = (f (sin (* j2 (/ pi s))))
+                                 ;;when (oddp j)
+                                 do (progn
+                                      (v (* q2 x) (* q2 y) z2)
+                                      (v (* q2 x2) (* q2 y2) z2)
+                                      (v (* q x2) (* q y2) z)
+                                      (v (* q x) (* q y) z))))))))
+          (glim:with-pushed-matrix (:modelview)
+            (glim:matrix-mode :modelview)
+            (glim:color 1 1 1 1)
+            (glim:normal 0 1 0)
+            (glim:with-primitives :quads
+              (glim:vertex -10 -1.1 10)
+              (glim:vertex 10 -1.1 10)
+              (glim:vertex 10 -1.1 -10)
+              (glim:vertex -10 -1.1 -10))))))
     (glut:swap-buffers)))
 
 (defmethod glut:reshape ((window 3b-glim-example) width height)
@@ -255,6 +321,7 @@
     (#\p (setf *primitive* (mod (1+ *primitive*) (length *primitives*)))
      (format t "~&primitive = ~s~%"
              (aref *primitives* *primitive*)))
+    (#\s (setf *sphere* (not *sphere*)))
     (#\space (setf *anim* (not *anim*)))
     (#\Esc
      (glut:destroy-current-window))))

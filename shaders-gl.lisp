@@ -5,7 +5,7 @@
                 #:tex-mode0 #:tex-mode1
                 #:tex0-1 #:tex0-2 #:tex0-3
                 #:tex1-1 #:tex1-2 #:tex1-3
-                #:line-width #:point-size #:light-position
+                #:line-width #:point-size #:lights-enabled #:lights
                 #:draw-flags)
   (:export #:vertex
            #:fragment))
@@ -22,7 +22,7 @@
 
 (uniform mv :mat4) ;; model-view matrix
 ;;(uniform mvp :mat4) ;; model-view-projection matrix
-(uniform proj :mat4)                    ;; projection matrix
+(uniform proj :mat4) ;; projection matrix
 (uniform normal-matrix :mat4)
 (uniform tex-mode0 :int)
 (uniform tex-mode1 :int)
@@ -36,7 +36,18 @@
 (uniform line-width :float)
 (uniform point-size :float)
 (uniform draw-flags :vec4)
-(uniform light-position :vec3)
+(uniform lights-enabled :vec4)
+
+(defstruct -lights
+  (position :vec4)
+  (ambient :vec4)
+  (diffuse :vec4)
+  (specular :vec4)
+  (spot-dir :vec3)
+  (spot-params :vec3)
+  (attenuation :vec3))
+
+(uniform lights (-lights 4))
 
 (uniform dims :vec4)
 
@@ -48,8 +59,6 @@
   (color2 :vec3)
   (uv :vec3)
   (uv2 :vec3)
-  (eye-direction :vec3)
-  (light-direction :vec3)
   (bary :vec4)
   (flags :vec4 :flat))
 
@@ -59,7 +68,9 @@
          (mode (.x flags))
          (dxy (vec4 0 0 0 0))
          (pp (* proj mv-pos))
-         (bary (vec4 0)))
+         (bary (vec4 0))
+;;; fixme: calculate and pass proper normal matrix from host
+         (nm (mat3 mv)))
     (case mode
       (0 ;; tri
        ;; only need to set up barycentric coords for wireframe mode
@@ -165,16 +176,12 @@
       (t
        0))
     (setf gl-position (+ pp dxy))
-    (setf (@ outs normal) (* (mat3 normal-matrix) normal)
+    (setf (@ outs normal) (* nm normal)
           (@ outs position) (vec3 mv-pos)
-          (@ outs uv)#++(.xyz (* 0.5 (+ 1 (vec3 mv-pos))))
-                     (.xyz texture0)
-          ;(@ outs uv2) (.xyz texture1)
+          (@ outs uv) (.xyz texture0)
+          ;;(@ outs uv2) (.xyz texture1)
           (@ outs color) color
           (@ outs color2) secondary-color
-          ;; interpolated lighting parameters
-          (@ outs light-direction) (- light-position (vec3 mv-pos))
-          (@ outs eye-direction) eye-dir
           (@ outs flags) flags
           (@ outs bary) bary)))
 
@@ -230,10 +237,6 @@
          (w1 (- 1 (* (max 2 (.w bary))
                      (vec2 (max (.x dx) (.x dy))
                            (max (.y dx) (.y dy))))))
-         #++(w2 (- 1 (* (max 1 (.w bary))
-                        (vec2 (max (.x dx) (.x dy))
-                              (max (.y dx) (.y dy))))
-                   (- d)))
          #++(a (step (vec2 (- 1 w))
                      (abs (.xy bary))))
          (a (smooth-step (- w1 d)
@@ -247,7 +250,8 @@
   (let ((a 1.0))
     (case flag
       ;; normal
-      (0 (setf a 1.0))
+      (0 (setf a 1.0)
+       (return a))
       ;; smooth
       (1 (case mode
            (0 ;; tri
@@ -273,33 +277,84 @@
        (setf a 1.0)))
     (return a)))
 
+(defun ambient-m ()
+  ;; todo: check face, material uniforms
+  (return (vec4 0.2 0.2 0.2 1)))
+
+(defun diffuse-m (uv)
+  ;; todo: check face, material uniforms
+  (return
+    (* (@ ins color)
+       (case tex-mode0
+         (2
+          (texture tex0-2 (.xy uv)))
+         (1
+          (texture tex0-1 (.x uv)))
+         (3
+          (texture tex0-3 (.xyz uv)))
+         (t
+          (vec4 0.8 0.8 0.8 1))))))
+
+(defun specular-m ()
+  ;; todo: check face, material uniforms
+  (return (vec4 1 1 1 1)))
+
+(defun emissive-m ()
+  ;; todo: check face, material uniforms
+  (return (vec4 0 0 0 1)))
+
+
+(defun ambient-scene ()
+  ;; todo: check uniforms
+  (return (vec4 0.2 0.2 0.2 1)))
+
+(defun ldelta (p1 p2)
+  (when (and (zerop (.w p1)) (zerop (.w p2)))
+    (return (normalize (- (.xyz p2) (.xyz p1)))))
+  (when (zerop (.w p1))
+    (return (- (normalize (.xyz p2)))))
+  (when (zerop (.w p2))
+    (return (normalize (.xyz p1))))
+  (return (normalize (- (.xyz p2) (.xyz p1)))))
+
+(defun light (l n p eye acm dcm scm)
+  (let* ((acli (@ (aref lights l) ambient))
+         (dcli (@ (aref lights l) diffuse))
+         (scli (@ (aref lights l) specular))
+         (pli (@ (aref lights l) position))
+         (v (vec4 p 1))
+         (vpli (ldelta v pli))
+         (ndotvp (max 0 (dot n vpli)))
+         (fi (if (= ndotvp 0) 0 1))
+         (h (normalize (+ eye vpli)))
+         (atti (@ (aref lights l) attenuation))
+         (att 1.0)
+         (srm 10.0))
+    (unless (zerop (.w pli))
+      (let ((d (length (- (.xyz v) (.xyz pli)))))
+        (setf att (/ (dot (vec3 1 d (* d d)) atti)))))
+    ;; todo: spot
+    (return
+      (* att
+         (+ (* acm acli)
+            (* ndotvp dcm dcli)
+            (* fi (expt (max 0 (dot n h)) srm) scm scli))))))
+
 (defun fragment ()
   (let* ((normal (normalize (@ ins normal)))
-         ;;(eye-direction (normalize (@ ins eye-direction)))
-         ;;(light-direction (normalize (@ ins light-direction)))
-;;;; calculate some intermediate values
-         ;;   (l-dot-n (clamp (dot light-direction normal) 0 1))
-         ;;   (r (reflect (- light-direction) normal))
-         ;;   (r-dot-v (clamp (dot r eye-direction) 0 1))
-         ;;   (distance (length (@ ins eye-direction)))
-         (uv (@ ins uv))
-         (t0 (case tex-mode0
-               (1
-                (texture tex0-1 (.x uv)))
-               (2
-                (texture tex0-2 (.xy uv)))
-               (3
-                (texture tex0-3 (.xyz uv)))
-               (t
-                (vec4 1 1 1 1))))
+         (eye-direction (normalize (- (@ ins position))))
          (mode (if gl-front-facing
                    (.x draw-flags)
                    (.y draw-flags)))
          (a (smoothing mode (.x (@ ins flags)) (@ ins bary)))
-         (c (@ ins color)))
+         (dcm (diffuse-m (@ ins uv)))
+         #++(acm (ambient-m))
+         (acm dcm)
+         (scm (specular-m))
+         (ecm (emissive-m))
+         (acs (ambient-scene))
+         (clight (+ ecm (* acm acs))))
     (declare (:float a))
-    (setf c (* t0 c))
-    #++(setf color  (* (@ ins color) t0))
     (case mode
       (3
        (setf color (vec4 (mix (.xyz (@ ins color))
@@ -307,11 +362,23 @@
                               a)
                          1)))
       (t
-       (when (and (<= a 0.0) (/= mode 3))
+       (when (<= a 0.0)
          (discard))
+       (when gl-front-facing
+         (unless (zerop (.x lights-enabled))
+           (incf clight (light 0 normal (@ ins position) eye-direction
+                               acm dcm scm)))
+         (unless (zerop (.y lights-enabled))
+           (incf clight (light 1 normal (@ ins position) eye-direction
+                               acm dcm scm)))
+         (unless (zerop (.z lights-enabled))
+           (incf clight (light 2 normal (@ ins position) eye-direction
+                               acm dcm scm)))
+         (unless (zerop (.w lights-enabled))
+           (incf clight (light 3 normal (@ ins position) eye-direction
+                               acm dcm scm))))
+
        (setf color (vec4 (if gl-front-facing
-                             (.xyz c)
+                             (.xyz clight)
                              (.xyz (@ ins color2)))
-                         a))))
-    #++(setf color (vec4 (.xyz t0) a))
-    #++(setf color (vec4 (vec3 (length (@ ins bary))) 1))))
+                         a))))))
