@@ -55,6 +55,73 @@
   (bary :vec4)
   (flags :vec4 :flat))
 
+
+(defun smooth-tri-bary (corner w b)
+  (declare (inout b))
+  (setf (aref b (int corner)) 1)
+  (setf (.w b) w))
+
+(defun smooth-quad-bary (corner w b)
+  (case corner
+    (0 (setf (.xyw b) (vec3 -1 1 w)))
+    (1 (setf (.xyw b) (vec3 -1 -1 w)))
+    (2 (setf (.xyw b) (vec3 1 -1 w)))
+    (t (setf (.xyw b) (vec3 1 1 w)))))
+
+(defun points-bary (corner smoothp point-size bary dxy)
+  (declare (inout bary)
+           (out dxy))
+  (let* ((s2 (+ point-size
+                (if smoothp 2 0)))
+         (s1 (- s2)))
+    (case corner
+      (0
+       (setf (.xyz bary) (vec3 s2 s1 point-size))
+       (setf dxy (vec2 1 -1)))
+      (1
+       (setf (.xyz bary) (vec3 s2 s2 point-size))
+       (setf dxy (vec2 1 1)))
+      (2
+       (setf (.xyz bary) (vec3 s1 s2 point-size))
+       (setf dxy (vec2 -1 1)))
+      (3
+       (setf (.xyz bary) (vec3 s1 s1 point-size))
+       (setf dxy (vec2 -1 -1)))
+      (t
+       (setf dxy (vec2 33 33))))
+    (setf dxy (* (.zw dims) s2 dxy))))
+
+(defun lines-bary (corner smoothp tl tx line-width bary dxy)
+  (declare (out dxy bary))
+  (let* ((s2 (+ line-width (if smoothp 2 0)))
+         (s1 (- s2)))
+    (if smoothp
+        (let ((ty (vec2 (- (.y tx)) (.x tx))))
+          (case corner
+            (0
+             (setf bary (vec4 (- s1 tl) s1 line-width tl)))
+            (1
+             (setf tx (- tx))
+             (setf bary (vec4 (- s1 tl) s2 line-width tl)))
+            (2
+             (setf bary (vec4 (+ s2 tl) s2 line-width tl)))
+            (3
+             (setf tx (- tx))
+             (setf bary (vec4 (+ s2 tl) s1 line-width tl))))
+          (setf dxy (+ tx ty)))
+        (progn
+          (case corner
+            (1
+             (setf tx (- tx)))
+            (3
+             (setf tx (- tx))))
+          (setf dxy (normalize (.xy tx)))))
+    (setf dxy (* s2 dxy))
+    (when (< (abs (length dxy)) 2)
+      (setf dxy (* 2 (normalize dxy))))
+    (setf dxy (* (.zw dims) dxy))))
+
+
 (defun vertex ()
   (let* ((mv-pos (* mv position))
          (eye-dir (- (vec3 mv-pos)))
@@ -65,91 +132,37 @@
 ;;; fixme: calculate and pass proper normal matrix from host
          (nm (mat3 mv)))
     (case mode
-      (0 ;; tri
-       ;; only need to set up barycentric coords for wireframe mode
-       (case (.z flags)
-         (0 (setf (.x bary) 1))
-         (1 (setf (.y bary) 1))
-         (2 (setf (.z bary) 1))
-         (t (setf (.w bary) 1)))
-       (setf (.w bary) line-width)
+      (0                           ;; tri
+       (when (= 2 (.x draw-flags)) ;; wireframe mode
+         (smooth-tri-bary (.z flags) line-width bary))
        ;; workaround for type inference bug
        0)
       (3 ;; quads
-       ;; only need to set up barycentric coords for wireframe mode
-       (case (.z flags)
-         (0 (setf (.xy bary) (vec2 -1 1)))
-         (1 (setf (.xy bary) (vec2 -1 -1)))
-         (2 (setf (.xy bary) (vec2 1 -1)))
-         (3 (setf (.xy bary) (vec2 1 1))))
-       (let ((w 1))
-         (setf (.zw bary)  (vec2 line-width)))
+       (when (= 2 (.x draw-flags))
+         (smooth-quad-bary (.z flags) line-width bary))
        ;; workaround for type inference bug
        0)
       (1
        ;; points
-       (let* ((dist (length (vec3 mv-pos)))
-              (corner (.z flags))
-              (smooth1 (= 1 (.x draw-flags)))
-              (s2 (+ point-size
-                     (if smooth1 2 0)))
-              (s1 (- s2)))
-         (case corner
-           (0
-            (setf (.xyz bary) (vec3 s2 s1 point-size))
-            (setf dxy (vec2 1 -1)))
-           (1
-            (setf (.xyz bary) (vec3 s2 s2 point-size))
-            (setf dxy (vec2 1 1)))
-           (2
-            (setf (.xyz bary) (vec3 s1 s2 point-size))
-            (setf dxy (vec2 -1 1)))
-           (3
-            (setf (.xyz bary) (vec3 s1 s1 point-size))
-            (setf dxy (vec2 -1 -1)))
-           (t
-            (setf dxy (vec2 33 33))))
-         (setf dxy (* (.zw dims) s2 dxy))
+       (let* ((corner (.z flags)))
+         (points-bary corner (= 1 (.x draw-flags))
+                      point-size
+                      bary dxy)
          (setf dxy (* dxy (.w pp))))
        0)
       (2 ;; line
-       (let* ((dist (length (vec3 mv-pos)))
-              (smooth1 (= 1 (.x draw-flags)))
-              (corner (.z flags))
-              (mv-p2 (* mv (vec4 (.xyz tangent) 1)))
+       (let* ((mv-p2 (* mv (vec4 (.xyz tangent) 1)))
               (pp2 (* proj mv-p2))
               (tn (- (/ (.xyz pp2) (.w pp2))
                      (/ (.xyz pp) (.w pp))))
               (tl (length (* (.xy tn) (/ (.zw dims)) 0.5)))
-              (tx (normalize (.xy (cross tn (.xyz mv-pos)))))
-              (lw line-width)
-              (s2 (+ lw (if smooth1 2.0 0.0)))
-              (s1 (- s2)))
-         (if smooth1
-             (let ((ty (vec2 (- (.y tx)) (.x tx))))
-               (case corner
-                 (0
-                  (setf bary (vec4 (- s1 tl) s1 lw tl)))
-                 (1
-                  (setf tx (- tx))
-                  (setf bary (vec4 (- s1 tl) s2 lw tl)))
-                 (2
-                  (setf bary (vec4 (+ s2 tl) s2 lw tl)))
-                 (3
-                  (setf tx (- tx))
-                  (setf bary (vec4 (+ s2 tl) s1 lw tl))))
-               (setf dxy (+ tx ty)))
-             (progn
-               (case corner
-                 (1
-                  (setf tx (- tx)))
-                 (3
-                  (setf tx (- tx))))
-               (setf dxy (normalize (.xy tx)))))
-         (setf dxy (* s2 dxy))
-         (when (< (abs (length dxy)) 2)
-           (setf dxy (* 2 (normalize dxy))))
-         (setf dxy (* (.zw dims) dxy))
+              (tx (normalize (.xy (cross tn (.xyz mv-pos))))))
+         (lines-bary (.z flags)
+                     (= 1 (.x draw-flags))
+                     tl tx
+                     line-width
+                     bary dxy
+                     )
          (setf dxy (* dxy (.w pp))))
        0)
       (t
@@ -288,8 +301,8 @@
          (scli (@ (aref lights l) specular))
          (pli (@ (aref lights l) position))
          (vpli (if (zerop (.w pli))
-                   (normalize (- (.xyz pli) v))
-                   (normalize (.xyz pli))))
+                   (normalize (.xyz pli))
+                   (normalize (- (.xyz pli) v))))
          (ndotvp (max 0 (dot n vpli)))
          (h (normalize (+ eye vpli)))
          (atti (@ (aref lights l) attenuation))
