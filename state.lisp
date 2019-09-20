@@ -69,6 +69,7 @@
 (defconstant +tex-mode-3d+ 3)
 ;; indices for draw-flags uniform
 (defconstant +draw-flag-mode+ 0)
+(defconstant +draw-flag-mode-back+ 1)
 ;; values for +draw-flag-mode+
 (defconstant +draw-mode-normal+ 0)
 (defconstant +draw-mode-smooth+ 1)
@@ -417,13 +418,12 @@
                   'proj (copy-seq (ensure-matrix :projection))
                   'line-width (current-line-width *state*)
                   'point-size (current-point-size *state*)
-                  'draw-flags (draw-flags *state*)
+                  'draw-flags (copy-seq (draw-flags *state*))
                   'tex-mode0 (cond
                                ((get-flag :texture-3d) +tex-mode-3d+)
                                ((get-flag :texture-2d) +tex-mode-2d+)
                                ((get-flag :texture-1d) +tex-mode-1d+)
                                (t +tex-mode-off+))
-                  'tex-mode1 +tex-mode-off+
                   'light-postion (v4 0 3 0 1)
                   'lights-enabled (if (f :lighting)
                                       (vector (fi :light0) (fi :light1)
@@ -463,24 +463,25 @@
   (let ((prim-size (gethash primitive *primitives*))
         (o (car (gethash :flags (vertex-format *state*))))
         (cv (current-vertex *state*)))
-    (when (numberp (draw-flags *state*))
-      (print (draw-flags *state*))
-      (setf (draw-flags *state*) (v4 0 0 0 0)))
     (macrolet ((df (flag mode &rest more)
                  `(cond
                     ,@ (loop for (f m) on (list* flag mode more) by 'cddr
                              collect  `((get-flag ,f)
-                                        (setf (aref (draw-flags *state*) 0)
+                                        (setf (aref (draw-flags *state*)
+                                                    +draw-flag-mode+)
                                               (float ,m 0.0))))
-                       (t (setf (aref (draw-flags *state*) 0)
+                       (t (setf (aref (draw-flags *state*)
+                                      +draw-flag-mode+)
                                 (float +draw-mode-normal+ 0.0)))))
                (dfb (flag mode &rest more)
                  `(cond
                     ,@ (loop for (f m) on (list* flag mode more) by 'cddr
                              collect  `((get-flag ,f)
-                                        (setf (aref (draw-flags *state*) 1)
+                                        (setf (aref (draw-flags *state*)
+                                                    +draw-flag-mode-back+)
                                               (float ,m 0.0))))
-                       (t (setf (aref (draw-flags *state*) 1)
+                       (t (setf (aref (draw-flags *state*)
+                                      +draw-flag-mode-back+)
                                 (float +draw-mode-normal+ 0.0))))))
       (ecase primitive
         (:points
@@ -661,7 +662,6 @@
       (setf (nibbles:ieee-single-ref/le cv o) (current-point-size *state*))))
   (let ((o (car (gethash :flags (vertex-format *state*)))))
     (declare (type (unsigned-byte 16) o))
-    (setf (aref cv (+ o +prim-mode-flag+)) +point-flag+)
 
     (let* ((v (loop with o = (+ +corner-index-flag+ o)
                     for i below 4
