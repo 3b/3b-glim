@@ -48,16 +48,6 @@
         #++(glim:line-width (- w (log (random (expt 2.0 w)) 2)))
         #++(glim:line-width (- 16 (expt (random (expt 2.0 16)) 1/4))))
       ;;(glim:line-width 10)
-      (if *smooth*
-          (progn
-            (glim:enable :line-smooth :point-smooth)
-            (glim:polygon-mode :front-and-back :wireframe))
-          (progn
-            (glim:disable :line-smooth :point-smooth)
-            (glim:polygon-mode :front-and-back :fill)))
-      (when *back*
-        (glim:polygon-mode :back :filled-wireframe))
-
       (glim:with-pushed-matrix (:modelview)
         (glim:scale 2 2 2)
         (glim:with-primitives (aref *primitives* *primitive*)
@@ -203,6 +193,19 @@
       (glim:secondary-color (* 0.5 (+ 1 (sin now)))
                             (* 0.5 (+ 1 (sin (* 2 now))))
                             (* 0.5 (+ 1 (sin (* 3 now)))))
+
+      (if *smooth*
+          (progn
+            (glim:enable :line-smooth :point-smooth)
+            (glim:polygon-mode :front-and-back :wireframe))
+          (progn
+            (glim:disable :line-smooth :point-smooth)
+            (glim:polygon-mode :front-and-back :fill)))
+      (when *back*
+        (glim:polygon-mode :back :filled-wireframe)
+        (glim:polygon-mode :back :fill))
+
+
       (glim:with-pushed-matrix (:modelview)
         (glim:matrix-mode :modelview)
         #++(glim:look-at '(0 0 4) '(0 0 0) '(0 1 0))
