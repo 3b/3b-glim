@@ -5,12 +5,10 @@
   :license "MIT"
   :depends-on (alexandria sb-cga nibbles)
   :serial t
+  :pathname "im/"
   :components ((:file "package")
                (:file "state")
-               (:file "buffer")
                (:file "matrix-stack")
-               (:file "2d")
-               (:file "3d")
                ;; not sure if shaders will be 3bgl-shaders, or what?
                #++(:file "shaders")))
 
@@ -18,6 +16,7 @@
   :description "OpenGL utilities for 3b-glim"
   :depends-on (cl-opengl 3b-glim 3bgl-shader)
   :serial t
+  :pathname "im/"
   :components ((:file "shaders-gl")
                (:file "gl")))
 
@@ -39,4 +38,5 @@
 (defsystem 3b-glim/example
   :depends-on (3b-glim/gl cl-glut pngload)
   :serial t
+  :pathname "im"
   :components ((:file "example")))
