@@ -62,6 +62,7 @@
   (setf (.w b) w))
 
 (defun smooth-quad-bary (corner w b)
+  (declare (out b))
   (case corner
     (0 (setf (.xyw b) (vec3 -1 1 w)))
     (1 (setf (.xyw b) (vec3 -1 -1 w)))
@@ -132,13 +133,16 @@
 ;;; fixme: calculate and pass proper normal matrix from host
          (nm (mat3 mv)))
     (case mode
-      (0                           ;; tri
-       (when (= 2 (.x draw-flags)) ;; wireframe mode
+      (0 ;; tri
+       ;; wireframe modes
+       (when (or (any (equal (vec2 2) (.xy draw-flags)))
+                 (any (equal (vec2 3) (.xy draw-flags))))
          (smooth-tri-bary (.z flags) line-width bary))
        ;; workaround for type inference bug
        0)
       (3 ;; quads
-       (when (= 2 (.x draw-flags))
+       (when (or (any (equal (vec2 2) (.xy draw-flags)))
+                 (any (equal (vec2 3) (.xy draw-flags))))
          (smooth-quad-bary (.z flags) line-width bary))
        ;; workaround for type inference bug
        0)
