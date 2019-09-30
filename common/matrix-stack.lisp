@@ -44,6 +44,11 @@
 (defun load-matrix (m)
   (replace *current-matrix* m))
 
+(defun copy-matrix (&optional m)
+  (if m
+      (copy-seq (ensure-matrix m))
+      (copy-seq *current-matrix*)))
+
 (declaim (inline deg-to-rad))
 (defun deg-to-rad (a)
   (* a #.(coerce (/ pi 180) 'single-float)))

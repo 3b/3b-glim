@@ -26,4 +26,7 @@
    #:octet-vector #:u16-vector #:u32-vector #:mat4x4
    #:f #:c4 #:v2 #:v3 #:v4
 
-   ))
+   #:s8
+   #:s16
+   #:s32
+   #:copy-matrix))

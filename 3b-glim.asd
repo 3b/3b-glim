@@ -6,6 +6,7 @@
   :components ((:file "package")
                (:file "utils")
                (:file "matrix-stack")))
+
 (defsystem 3b-glim
   :description "Immediate-mode 2d and 3d graphics library, intended for use with modern GL/GLES and Vulkan"
   :version "0.0.1"
@@ -55,11 +56,17 @@
   :version "0.0.1"
   :author "Bart Botta <00003b at gmail.com>"
   :license "MIT"
-  :depends-on (alexandria sb-cga nibbles)
+  :depends-on (alexandria nibbles 3b-glim/common)
   :serial t
   :pathname "3d-s/"
   :components ((:file "package")
-               (:file "state")
-               (:file "matrix-stack")
-               ;; not sure if shaders will be 3bgl-shaders, or what?
-               #++(:file "shaders")))
+               (:file "buffer")))
+
+
+(defsystem 3b-glim/example/s
+  :depends-on (3b-glim/s cl-glut pngload  3bgl-shader)
+  :serial t
+  :pathname "3d-s"
+  :components ((:file "example-shaders")
+               (:file "scratchpad")
+               (:file "example")))

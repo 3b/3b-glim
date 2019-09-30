@@ -1,5 +1,9 @@
 (defpackage #:3b-glim
   (:use :cl :3b-glim/common)
+  (:import-from #:3b-glim/common
+                #:*matrix-stacks*
+                #:*matrices*
+                #:*current-matrix*)
   (:export
    ;; buffering/state tracking
    #:*state*
@@ -11,7 +15,7 @@
    #:map-draws
 
    ;; geometry specification
-   #:with-primitives #:with-primitive
+   #:with-draw
    #:begin
    #:end
    #:vertex
@@ -20,6 +24,8 @@
    #:fog-coord
    #:secondary-color
    #:color
+
+   #:index
 
    ;; matrix ops / utilities
    #:matrix-mode
@@ -34,6 +40,7 @@
    #:pop-matrix
    #:ensure-matrix
    #:load-matrix
+   #:copy-matrix
 
    #:look-at
    #:frustum
