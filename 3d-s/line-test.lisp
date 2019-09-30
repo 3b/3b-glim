@@ -21,10 +21,6 @@
   (position :vec3)
   (color :vec4))
 
-(defun lines-bary (corner tx line-width dxy)
-  (declare (out dxy)))
-
-
 (defun vertex ()
   (let* ((mv-pos (* mv position))
          (corner (.x flags))
