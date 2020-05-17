@@ -12,7 +12,7 @@
   :version "0.0.1"
   :author "Bart Botta <00003b at gmail.com>"
   :license "MIT"
-  :depends-on (alexandria nibbles 3b-glim/common)
+  :depends-on (3b-glim/common 3b-glim/s alexandria)
   :serial t
   :pathname "im/"
   :components ((:file "package")
@@ -46,6 +46,12 @@
   :serial t
   :pathname "im"
   :components ((:file "example")))
+
+(defsystem 3b-glim/scratchpad
+  :depends-on (3b-glim/gl cl-glut pngload)
+  :serial t
+  :pathname "im"
+  :components ((:file "scratchpad")))
 
 
 

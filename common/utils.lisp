@@ -11,6 +11,7 @@
 (deftype octet-vector () '(simple-array octet (*)))
 (deftype u16-vector () '(simple-array u16 (*)))
 (deftype u32-vector () '(simple-array u32 (*)))
+(deftype float-vector (&optional (n '*)) `(simple-array single-float (,n)))
 (deftype mat4x4 () '(simple-array single-float (16)))
 
 (deftype v2 () '(simple-array single-float (2)))

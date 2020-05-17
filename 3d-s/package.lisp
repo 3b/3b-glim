@@ -64,4 +64,8 @@
    #:with-draw
    #:index
    #:with-state
-   #:get-buffers))
+   #:get-buffers
+   #:reset-buffers
+   #:copy-current-vertex
+   #:attrib-u8v
+   #:attrib-fv))

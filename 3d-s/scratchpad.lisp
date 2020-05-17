@@ -7,7 +7,11 @@
            #:display
            #:keyboard
            #:mx
-           #:my))
+           #:my
+           #:init-gl
+           #:entry
+           #:mouse
+           #:mouse-wheel))
 (in-package 3b-glim-example/s)
 
 (defclass scratchpad (glut:window)
@@ -40,9 +44,12 @@
     (if (assoc key (shaders w))
         (setf (cdr (assoc key (shaders w))) stages)
         (push (list* key stages) (shaders w)))
-    (setf (gethash key (programs w))
-          (multiple-value-list
-           (3bgl-shaders::reload-program* (first old) stages :print t)))))
+    (with-simple-restart (continue "skip compiling ~s" key)
+      (setf (gethash key (programs w))
+            (multiple-value-list
+             (3bgl-shaders::reload-program* (first old) stages :print t))))))
+
+(defmethod init-gl ((w scratchpad)))
 
 (defmethod glut:display-window :before ((w scratchpad))
   (gl:clear-color 0 0 0 0)
@@ -52,7 +59,8 @@
                              internal-time-units-per-second)
                           'double-float))
   (loop for s in (shaders w)
-        do (apply #'reload-shader w s)))
+        do (apply #'reload-shader w s))
+  (init-gl w))
 
 
 (defparameter *modified-shader-functions* nil)
@@ -80,7 +88,8 @@
       (format t "~%recompiling shader program for changes in functions:~&  ~a~% = ~s~%"
               m recompile)
       (loop for s in recompile
-            do (apply #'reload-shader w s)))))
+            do (with-simple-restart (continue "skip compiling ~s" s)
+                 (apply #'reload-shader w s))))))
 
 
 (defvar *r* 0)
@@ -97,11 +106,11 @@
   (let* ((n (get-internal-real-time))
          (s (float (/ (- n *frametime*)
                       internal-time-units-per-second))))
-    (when (> s 5)
+    (when (>= s 10)
       (format t "~s frames in ~s sec = ~s fps (~s s)~%"
               *frames* s (/ *frames* s) (/ s *frames*))
       (setf *frametime* n)
-      (setf *frames* 1))))
+      (setf *frames* 0))))
 
 
 (defmethod display ((window scratchpad) now))
@@ -176,8 +185,13 @@
                               for (ui nil nil ut) = uu
                               do (when (and ui (not (minusp ui)))
                                    (ecase ut
-                                     (:int
+                                     ((:int
+                                       :sampler-1d
+                                       :sampler-2d
+                                       :sampler-3d)
                                       (gl:uniformi ui v))
+                                     ((:bool)
+                                      (gl:uniformi ui (if v 1 0)))
                                      ((:ivec2 :ivec3 :ivec4)
                                       (if (numberp v)
                                           (gl:uniformi ui v 0 0 0)
@@ -189,7 +203,7 @@
                                           (gl:uniformfv ui v)))
                                      (:mat4 (gl:uniform-matrix-4fv ui v nil))))))
                       (if index-base
-                          (progn
+                          (when (plusp index-count)
                             (assert (plusp index-count))
                             (%gl:draw-elements-base-vertex
                              primitive index-count
@@ -203,21 +217,24 @@
       (gl:delete-buffers (list* ibo vbos)))))
 
 (defmethod glut:display ((window scratchpad))
-  (fps)
-  (recompile-modified-shaders window)
-  (let ((now (coerce (- (coerce (/ (get-internal-real-time)
-                                   internal-time-units-per-second)
-                                'double-float)
-                        (start window))
-                     'single-float)))
-    (flet ((s (x)
-             (* 0.1 (abs (sin (/ now x))))))
-      (gl:clear-color (s 2) (s 3) (s 4) 1)
-      (gl:clear :color-buffer :depth-buffer)
-      (display window now)
-      (glut:swap-buffers))))
+  (with-simple-restart (continue "continue")
+    (fps)
+    (recompile-modified-shaders window)
+    (let ((now (coerce (- (coerce (/ (get-internal-real-time)
+                                     internal-time-units-per-second)
+                                  'double-float)
+                          (start window))
+                       'single-float)))
+      (flet ((s (x)
+               (* 0.1 (abs (sin (/ now x))))))
+        (gl:clear-color (s 2) (s 3) (s 4) 1)
+        (gl:clear :color-buffer :depth-buffer)
+        (display window now)
+        (glut:swap-buffers)))))
 
-
+(defmethod entry (w state))
+(defmethod glut:entry ((window scratchpad) state)
+  (entry window state))
 (defmethod glut:reshape ((window scratchpad) width height)
   (setf (wx window) width (wy window) height)
   (gl:viewport 0 0 width height)
@@ -246,6 +263,21 @@
     (#\Esc
      (glut:destroy-current-window))
     (otherwise (keyboard window key x y))))
+
+(defmethod glut:special ((window scratchpad) key x y)
+  (keyboard window key x y))
+
+(defmethod mouse ((window scratchpad) button state x y)
+  )
+
+(defmethod glut:mouse ((window scratchpad) button state x y)
+  (mouse window button state x y))
+
+(defmethod mouse-wheel ((window scratchpad) button state x y)
+  )
+
+(defmethod glut:mouse-wheel ((window scratchpad) button state x y)
+  (mouse-wheel window button state x y))
 
 (defmethod glut:motion ((window scratchpad) x y)
   (setf (mx window) x

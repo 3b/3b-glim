@@ -39,6 +39,7 @@
   ((element-type :reader element-type :initarg :type)
    (offset :reader offset :initarg :offset)
    (attribute-index :reader attribute-index :initarg :attribute-index)
+   (normalized :reader normalized :initarg :normalized :initform nil)
    (buffer-index :reader buffer-index :initarg :buffer-index)))
 
 (defclass buffer-format ()
@@ -125,6 +126,7 @@
      :u8vec2 (vec2/u8-writer-builder 2 1 :unsigned-byte)
      :u8vec3 (vec3/u8-writer-builder 3 1 :unsigned-byte)
      :u8vec4 (vec4/u8-writer-builder 4 1 :unsigned-byte)
+     :u8vec4 (vec4/u8-writer-builder 4 1 :unsigned-byte)
      :u16 (u16-writer-builder 1 2 :unsigned-short)
      :u16vec2 (vec2/u16-writer-builder 2 2 :unsigned-short)
      :u16vec3 (vec3/u16-writer-builder 3 2 :unsigned-short)
@@ -155,7 +157,9 @@
     (let ((atts (sort (copy-list attributes) '< :key 'car))
           (index-used (make-hash-table)))
       (setf atts
-            (loop for (index type .buffer) in atts
+            (loop for (index .type .buffer) in atts
+                  for type = (if (consp .type) (car .type) .type)
+                  for normalize = (if (consp .type) (second .type) t)
                   for buffer = (or .buffer 0)
                   do (assert (and (>= index 0)
                                   (< index +max-attribute-index+)))
@@ -164,7 +168,7 @@
                                   (< buffer buffer-count)))
                      (assert (not (gethash index index-used)))
                      (setf (gethash index index-used) t)
-                  collect (list index type buffer)))
+                  collect (list index type buffer normalize)))
       (list* buffer-count atts))))
 
 (defparameter *known-vertex-formats* (make-hash-table :test 'equal))
@@ -176,7 +180,7 @@
          (stride nil)
          (align0 nil)
          (atts
-           (loop for (index type attrib-buffer) in (cdr format)
+           (loop for (index type attrib-buffer n) in (cdr format)
                  ;; fixme: do we need separate alignment
                  for (w c s) = (gethash type *attribute-types*)
                  for align = (max s 4)
@@ -185,7 +189,8 @@
                                           :offset (align offset align)
                                           :type type
                                           :attribute-index index
-                                          :buffer-index attrib-buffer)
+                                          :buffer-index attrib-buffer
+                                          :normalized n)
                    and do (unless align0
                             (setf align0 align))
                           (setf offset (+ (align offset align)
@@ -428,6 +433,40 @@
     (when (uniform-delta *state*)
       (setf (gethash name (uniform-delta *state*)) v))))
 
+(defun copy-current-vertex (state)
+  ;; make a temp copy of current vertex state that can be restored later
+  (loop for buffer in (buffers (vertex-format state))
+        ;;for stride of-type vertex-offset = (stride buffer)
+        for vb of-type octet-vector in (vertex-buffers state)
+        collect (copy-seq vb)))
+
+(defun copy-current-vertex-into (state copy)
+  ;; copy current vertex state into a copy previously returned by
+  ;; COPY-CURRENT-VERTEX (avoids allocation, and possibly copies fewer bytes)
+  (loop for buffer in (buffers (vertex-format state))
+        for vb of-type octet-vector in (vertex-buffers state)
+        for stride of-type vertex-offset = (stride buffer)
+        for ob of-type octet-vector in copy
+        do (replace ob vb :end2 stride)))
+
+(defun restore-vertex-copy (state copy)
+  ;; overwrite current vertex state with previously state returned by
+  ;; COPY-CURRENT-VERTEX
+  (loop for buffer in (buffers (vertex-format state))
+        for vb of-type octet-vector in (vertex-buffers state)
+        for stride of-type vertex-offset = (stride buffer)
+        for ob of-type octet-vector in copy
+        do (replace vb ob :end2 stride)))
+
+(declaim (inline next-index))
+(defun next-index (state)
+  ;; fixme: combine this with emit-vertex?
+  (let* ((bvi (buffer-vertex-index state))
+         (vio (vertex-index-offset state))
+         (dvb (vertex-base (car (draws state)))))
+    (declare (type (unsigned-byte 32) bvi)
+             (type (unsigned-byte 32) vio dvb))
+    (- (+ bvi vio) dvb)))
 
 (defun emit-vertex (state)
   (declare (optimize speed)
@@ -523,7 +562,10 @@
 
 ;; these scale from 0.0-1.0 or -1.0..1.0 to range, truncate, and clamp
 (defun attrib-u8sc (index x &optional (y 0) (z 0) (w 0))
-  (flet ((a (a) (max 0 (min 255 (truncate (* a 255))))))
+  (flet ((a (a)
+           (let ((a (max 0.0 (min 1.0 a))))
+             (declare (type (single-float 0.0 1.0) a))
+             (truncate (* a 255)))))
     (declare (inline a))
     (funcall (aref *writers* index) (a x) (a y) (a z) (a w)))
   (%attrib0 index))
@@ -550,6 +592,38 @@
     (funcall (aref *writers* index) (a x) (a y) (a z) (a w)))
   (%attrib0 index))
 
+;; todo: more of these
+(declaim (inline attrib-u8v attrib-fv))
+
+(defun attrib-fv (index v)
+  (etypecase v
+    ((simple-array single-float (4))
+     (funcall (aref *writers* index)
+              (aref v 0) (aref v 1) (aref v 2) (aref v 3)))
+    ((simple-array single-float (3))
+     (funcall (aref *writers* index)
+              (aref v 0) (aref v 1) (aref v 2) 1.0))
+    ((simple-array single-float (2))
+     (funcall (aref *writers* index)
+              (aref v 0) (aref v 1) 0.0 1.0))
+    (sequence
+     (apply #'attrib-f (coerce v 'list))))
+  (%attrib0 index))
+
+(defun attrib-u8v (index v)
+  (etypecase v
+    ((simple-array octet (4))
+     (funcall (aref *writers* index)
+              (aref v 0) (aref v 1) (aref v 2) (aref v 3)))
+    ((simple-array octet (3))
+     (funcall (aref *writers* index)
+              (aref v 0) (aref v 1) (aref v 2) 255))
+    ((simple-array octet (2))
+     (funcall (aref *writers* index)
+              (aref v 0) (aref v 1) 0 255))
+    (sequence
+     (apply #'attrib-u8 (coerce v 'list))))
+  (%attrib0 index))
 
 
 (defun begin (primitive &key indexed shader)
@@ -599,8 +673,22 @@
               below (length ib)
             for index in indices
             do (setf (aref ib i) index))
-      (incf (index-buffer-index state) l))))
+      (incf (the u32 (index-buffer-index state)) l))))
 
+(defun reset-buffers (state)
+  (setf (%output-buffers state)
+        (allocate-output-buffers (vertex-format state) (vertex-count state)))
+  (setf (vertex-index-offset state) 0)
+  (setf (buffer-vertex-index state) 0)
+
+  (setf (%index-buffer state) (allocate-index-buffer (vertex-count state)))
+  (setf (index-index-offset state) 0)
+  (setf (index-buffer-index state) 0)
+
+  (setf (filled-output-buffers state) nil)
+
+  (setf (uniform-delta state) nil)
+  (setf (draws *state*) (list nil)))
 
 (defun get-buffers ()
   (let ((state *state*))
@@ -610,6 +698,8 @@
       (overflow-new-buffers state))
     (unless (zerop (index-buffer-index state))
       (overflow-index-buffers state))
+    (setf (vertex-index-offset state) 0)
+    (setf (index-index-offset state) 0)
     (loop with ib = nil
           with vb = (make-array (length (vertex-buffers state))
                                 :initial-element nil)

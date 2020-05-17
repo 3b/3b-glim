@@ -45,7 +45,7 @@
 ;;; or 330 for explicit attrib locations?
 
 
-(defclass glim-gl-state ()
+(defclass glim-gl-state (3b-glim::renderer-config)
   ((shader :accessor shader :initarg :shader)
    (uniforms :accessor uniforms :initform (make-hash-table))
    (light-uniforms :accessor light-uniforms :initform ())
@@ -66,7 +66,7 @@
   ;; not supporting use with multiple renderer backends at once for now
   (when (and
          (3b-glim::renderer-config 3b-glim:*state*)
-         (not (eql api (car (3b-glim::renderer-config 3b-glim:*state*)))))
+         (not (eql api (api (3b-glim::renderer-config 3b-glim:*state*)))))
     (cerror "Continue"
             "warning: changing renderer in already configured 3b-glim state"))
   (flet ((ext (x)
@@ -98,32 +98,30 @@
                    ;; es3.1+ for ssbo, no ssbo ext on es
                    (v 3 1))))
     (setf (3b-glim::%renderer-config 3b-glim:*state*)
-          (list
-           api
-           (make-instance
-            'glim-gl-state
-            :shader nil
-            :api api
-            :batching
-            (if (eql api :gl)
-                (cond
-                  ;; assuming anything with multi_draw_indirect also has VAOs
-                  ((or (ext "GL_ARB_multi_draw_indirect"
-                            ;; "GL_AMD_multi_draw_indirect" ?
-                            )
-                       (v 4 3))
-                   :multi-draw)
-                  ((or (ext "GL_ARB_vertex_array_object")
-                       (v 3 0))
-                   :vao)
-                  (t :simple))
-                (cond
-                  ((ext "GL_EXT_multi_draw_indirect")
-                   :multi-draw)
-                  ((or (ext "GL_OES_vertex_array_object")
-                       (v 3 0))
-                   :vao)
-                  (t :simple))))))))
+          (make-instance
+           'glim-gl-state
+           :shader nil
+           :api api
+           :batching
+           (if (eql api :gl)
+               (cond
+                 ;; assuming anything with multi_draw_indirect also has VAOs
+                 ((or (ext "GL_ARB_multi_draw_indirect"
+                           ;; "GL_AMD_multi_draw_indirect" ?
+                           )
+                      (v 4 3))
+                  :multi-draw)
+                 ((or (ext "GL_ARB_vertex_array_object")
+                      (v 3 0))
+                  :vao)
+                 (t :simple))
+               (cond
+                 ((ext "GL_EXT_multi_draw_indirect")
+                  :multi-draw)
+                 ((or (ext "GL_OES_vertex_array_object")
+                      (v 3 0))
+                  :vao)
+                 (t :simple)))))))
 
 (defun configure-renderer (&optional (api :gl))
   ;; is there any way to detect API?
@@ -166,18 +164,17 @@
 (defun load-shaders ()
   "Loads shaders used by glim into current GL context. Must call
 CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
-  (let* ((cfg (3b-glim::renderer-config 3b-glim:*state*))
-         (api (first cfg))
-         (config (second cfg)))
+  (let* ((config (3b-glim::renderer-config 3b-glim:*state*))
+         (api (api config)))
     (assert (member api '(:gl :gles)))
-      (time
-       (setf (values (shader config)
-                     (uniforms config))
-             (3bgl-shaders::reload-program
-              (shader config)
-              '3b-glim/gl-shaders:vertex
-              '3b-glim/gl-shaders:fragment
-              :version 330)))
+    (time
+     (setf (values (shader config)
+                   (uniforms config))
+           (3bgl-shaders::reload-program
+            (shader config)
+            '3b-glim/gl-shaders:vertex
+            '3b-glim/gl-shaders:fragment
+            :version 330)))
     (setf (light-uniforms config)
           (get-light-unforms config))))
 
@@ -200,141 +197,125 @@ CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
 (defvar *u*)
 (defvar *once* t)
 
-(defun gl-draw-callback (draws)
-  (let* ((cfg (3b-glim::renderer-config 3b-glim:*state*))
-         (api (first cfg))
-         (config (second cfg)))
-    (assert (member api '(:gl :gles)))
-    (recompile-modified-shaders)
-    (gl:use-program (shader config))
-    (setf *u* (list config 3b-glim::*state*))
-    (let* ((vbo (gl:gen-buffer))
-           (ibo (gl:gen-buffer))
-           (last-vb (list nil 0))
-           (last-ib (list nil 0))
-           (batches nil)
-           (itype :unsigned-short)
-           (isize 2)
-           (uniformh (uniforms config)))
-      (labels ((uv (u v)
-                 (when uniformh
-                   (gl:uniformfv (car (gethash u uniformh '(-1))) v)))
-               (uniforms (uniforms)
-                 (when uniformh
-                  (loop for (u v) on uniforms by #'cddr
-                        for uu = (gethash u uniformh)
-                        for (ui nil nil ut) = uu
-                        do (when (and ui (not (minusp ui)))
-                             (ecase ut
-                               (:int
-                                (gl:uniformi ui v))
-                               (:float (gl:uniformf ui v))
-                               ((:vec2 :vec3 :vec4)
-                                (if (numberp v)
-                                    (gl:uniformf ui v 0 0 0)
-                                    (gl:uniformfv ui v)))
-                               (:mat4 (gl:uniform-matrix-4fv ui v nil)))))))
-               (draw ()
-                 (when batches
-                   (setf itype
-                         (etypecase (car last-ib)
-                           (3b-glim::u16-vector :unsigned-short)
-                           (3b-glim::u32-vector :unsigned-int)))
-                   (setf isize
-                         (etypecase (car last-ib)
-                           (3b-glim::u16-vector 2)
-                           (3b-glim::u32-vector 4)))
-                   (gl:bind-buffer :array-buffer vbo)
-                   (cffi:with-pointer-to-vector-data (p (car last-vb))
-                     (when *once*
-                       (format t "upload vbo ~s~%" (cadr last-vb)))
-                     (%gl:buffer-data :array-buffer (cadr last-vb)
-                                      p :stream-draw))
-                   (gl:bind-buffer :element-array-buffer ibo)
-                   (cffi:with-pointer-to-vector-data (p (car last-ib))
-                     (when *once*
-                       (format t "upload ibo ~s~%" (cadr last-ib)))
-                     (%gl:buffer-data :element-array-buffer
-                                      (* (cadr last-ib)
-                                         isize)
-                                      p :stream-draw))
-                   (let ((s (3b-glim::vertex-size 3b-glim::*state*))
-                         (c (3b-glim::vertex-format 3b-glim::*state*)))
-                     (flet ((a (i n a &optional (type :float))
-                              (%gl:vertex-attrib-pointer i n type nil
-                                                         s
-                                                         (car (gethash a c '(-1))))
-                              (gl:enable-vertex-attrib-array i)))
-                       (a 0 4 :vertex)
-                       (a 1 4 :texture0)
-                       ;(a 2 4 :texture1)
-                       (a 3 4 :color)
-                       (a 4 3 :normal)
-                       (a 5 4 :tangent+width)
-                       (a 6 3 :secondary-color)
-                       (a 7 4 :flags :byte)))
-                   (loop for (p base start count uniforms)
-                           in (nreverse (shiftf batches nil))
-                         do (uniforms uniforms)
-                            (when *once*
-                              (format t "draw ~s ~s @ ~s~%" p count base))
-                            (%gl:draw-elements-base-vertex
-                             p count
-                             itype (* start isize)
-                             base)))))
-        (uv '3b-glim/gl-shaders::dims (dims config))
-        (3b-glim:map-draws
-         (lambda (prim &key buffer start end base-index index-buffer
-                         start-index index-count
-                         uniforms textures lighting)
-           (declare (ignore start))
-           (unless (and (vectorp buffer)
-                        (vector index-buffer))
-             (break "?"))
-           (when *once*
-             (format t "map ~s ~s ~s ~s~%" prim end base-index index-count))
-           (loop for i from 0
-                 for tx across textures
-                 for target in '(:texture-1d :texture-2d :texture-3d)
-                 for u in '(3b-glim:tex0-1 3b-glim:tex0-2 3b-glim::tex0-3)
-                 when tx
-                   do (gl:active-texture i)
-                      (gl:bind-texture target tx)
-                      (when uniformh
-                        (gl:uniformi (car (gethash u uniformh '(-1))) i)))
-           (when (and (light-uniforms config) lighting)
-             (loop for i across lighting
-                   for u across (light-uniforms config)
-                   when (plusp u)
-                     do (gl:uniformfv u i)))
-           (unless (and (eql buffer (car last-vb))
-                        (eql index-buffer (car last-ib)))
-             (draw) (setf batches nil)
-             (setf (car last-vb) buffer
-                   (cadr last-vb) end
-                   (car last-ib) index-buffer
-                   (cadr last-ib) (+ start-index index-count)))
-           (setf (cadr last-vb) (max (cadr last-vb) end)
-                 (cadr last-ib) (max (cadr last-ib)
-                                     (+ start-index index-count)))
-           (push (list prim base-index start-index index-count
-                       uniforms)
-                 batches))
-         draws)
-        (draw))
-      (gl:delete-buffers (list vbo ibo)))
-    (setf *once* nil)
-    (gl:disable-vertex-attrib-array 0)
-    (gl:disable-vertex-attrib-array 1)
-    (gl:disable-vertex-attrib-array 2)
-    (gl:disable-vertex-attrib-array 3)
-    (gl:disable-vertex-attrib-array 4)
-    (gl:disable-vertex-attrib-array 5)
-    (gl:disable-vertex-attrib-array 6)
-    (gl:disable-vertex-attrib-array 7)
-    (gl:bind-buffer :array-buffer 0)
-    (gl:bind-buffer :element-array-buffer 0)
-    (gl:use-program 0)))
+
+(defun gl-draw-callback (config draws buffers)
+  (recompile-modified-shaders)
+  (gl:use-program (shader config))
+
+  (let* ((vbos (gl:gen-buffers (length (getf buffers :vbo-sizes))))
+         (ibo (gl:gen-buffer))
+         (enabled-atts (make-hash-table))
+         (uniformh (uniforms config)))
+    (flet ((uv (u v)
+             (when uniformh
+               (gl:uniformfv (car (gethash u uniformh '(-1))) v))))
+      (uv '3b-glim/gl-shaders::dims (dims config)))
+    (unwind-protect
+         (progn
+           ;; upload the index data (we allocate with no data, then
+           ;; buffer-sub-data the individual pieces)
+           (gl:bind-buffer :element-array-buffer ibo)
+           (%gl:buffer-data :element-array-buffer (getf buffers :ibo-size)
+                            (cffi:null-pointer) :stream-draw)
+           (loop for offset = 0 then (+ offset s)
+                 for (s b) in (getf buffers :ibo-chunks)
+                 do (cffi:with-pointer-to-vector-data (p b)
+                      (%gl:buffer-sub-data :element-array-buffer
+                                           offset s
+                                           p)))
+
+           ;; upload vbo data
+           (loop for vbo-size across (getf buffers :vbo-sizes)
+                 for vbo-chunks across (getf buffers :vbo-chunks)
+                 for vbo in vbos
+                 do (gl:bind-buffer :array-buffer vbo)
+                    (%gl:buffer-data :array-buffer vbo-size
+                                     (cffi:null-pointer) :stream-draw)
+                    (loop for offset = 0 then (+ offset s)
+                          for (s b) in vbo-chunks
+                          do (cffi:with-pointer-to-vector-data (p b)
+                               (%gl:buffer-sub-data :array-buffer
+                                                    offset s p))))
+
+
+           ;; set up vertex attributes
+           (loop for buffer in (3b-glim/s::buffers
+                                (3b-glim/s::vertex-format 3b-glim/s::*state*))
+                 for stride = (3b-glim/s::stride buffer)
+                 for vbo in vbos
+                 do (gl:bind-buffer :array-buffer vbo)
+                    (loop for att in (3b-glim/s::attributes buffer)
+                          for offset = (3b-glim/s::offset att)
+                          for normalize = (3b-glim/s::normalized att)
+                          for (nil count nil type)
+                            = (gethash (3b-glim/s::element-type att)
+                                       3b-glim/s::*attribute-types*)
+                          for loc = (3b-glim/s::attribute-index att)
+                          do (gl:enable-vertex-attrib-array loc)
+                             (setf (gethash loc enabled-atts) loc)
+                             (%gl:vertex-attrib-pointer
+                              loc count type normalize stride offset)))
+           ;; dispatch draws
+           (loop
+             for draw in draws
+             for uniforms = (3b-glim/s::uniforms draw)
+             for index-base = (3b-glim/s::index-base draw)
+             for index-count = (3b-glim/s::index-count draw)
+             for primitive = (3b-glim/s::primitive draw)
+             for shader-id = (3b-glim/s::shader draw)
+             for vertex-base = (3b-glim/s::vertex-base draw)
+             for vertex-count = (3b-glim/s::vertex-count draw)
+             do (loop
+                  for u being the hash-keys of uniforms
+                    using (hash-value v)
+                  for uu = (gethash u uniformh)
+                  for (ui nil nil ut) = uu
+                  when (eql u :textures)
+                    do (loop
+                         for i from 0
+                         for tx across v
+                         for target in '(:texture-1d :texture-2d :texture-3d)
+                         for u in '(3b-glim:tex0-1 3b-glim:tex0-2
+                                    3b-glim:tex0-3)
+                         when tx
+                           do (gl:active-texture i)
+                              (gl:bind-texture target tx)
+                              (when uniformh
+                                (gl:uniformi (car (gethash u uniformh '(-1))) i)))
+                  when (and (eql u :lighting)
+                            (light-uniforms config))
+                    do (loop for i across v
+                             for u across (light-uniforms config)
+                             when (plusp u)
+                               do (gl:uniformfv u i))
+                  do (when (and ui (not (minusp ui)))
+                       (ecase ut
+                         (:int
+                          (gl:uniformi ui v))
+                         ((:ivec2 :ivec3 :ivec4)
+                          (if (numberp v)
+                              (gl:uniformi ui v 0 0 0)
+                              (gl:uniformiv ui v)))
+                         (:float (gl:uniformf ui v))
+                         ((:vec2 :vec3 :vec4)
+                          (if (numberp v)
+                              (gl:uniformf ui v 0 0 0)
+                              (gl:uniformfv ui v)))
+                         (:mat4
+                          (gl:uniform-matrix-4fv ui v nil)))))
+                (if index-base
+                    (when (plusp index-count)
+                      (%gl:draw-elements-base-vertex
+                       primitive index-count
+                       :unsigned-short (* index-base 2)
+                       vertex-base))
+                    (when (plusp vertex-count)
+                      (%gl:draw-arrays primitive vertex-base vertex-count)))))
+      ;; clean up
+      (gl:use-program 0)
+      (map nil 'gl:disable-vertex-attrib-array
+           (alexandria:hash-table-keys enabled-atts))
+      (gl:delete-buffers (list* ibo vbos)))))
 
 (defun init-state/gl (&key (api :gl))
   (configure-renderer api)

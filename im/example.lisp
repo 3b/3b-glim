@@ -19,6 +19,9 @@
 (defparameter *back* nil)
 (defparameter *tex* nil)
 (defparameter *sphere* t)
+(defparameter *vsync* nil)
+(defparameter *prim-test* nil)
+
 (defun solid-cube (&optional (x1 1))
   (declare (ignorable x1))
   (let ((v #((-1 -1 1) (1 -1 1) (1 1 1) (-1 1 1)
@@ -48,22 +51,20 @@
         #++(glim:line-width (- w (log (random (expt 2.0 w)) 2)))
         #++(glim:line-width (- 16 (expt (random (expt 2.0 16)) 1/4))))
       ;;(glim:line-width 10)
-      (glim:with-pushed-matrix (:modelview)
-        (glim:scale 2 2 2)
-        (glim:with-primitives (aref *primitives* *primitive*)
-          (glim:normal 0 0 1)
-          (q 0 1 2 3)
-          (unless *1-face*
-            (glim:normal 0 0 -1)
-            (q 4 7 6 5)
-            (glim:normal -1 0 0)
-            (q 4 0 3 7)
-            (glim:normal 1 0 0)
-            (q 1 5 6 2)
-            (glim:normal 0 1 0)
-            (q 3 2 6 7)
-            (glim:normal 0 -1 0)
-            (q 4 5 1 0)))))))
+      (glim::with-primitives (aref *primitives* *primitive*)
+        (glim:normal 0 0 1)
+        (q 0 1 2 3)
+        (unless *1-face*
+          (glim:normal 0 0 -1)
+          (q 4 7 6 5)
+          (glim:normal -1 0 0)
+          (q 4 0 3 7)
+          (glim:normal 1 0 0)
+          (q 1 5 6 2)
+          (glim:normal 0 1 0)
+          (q 3 2 6 7)
+          (glim:normal 0 -1 0)
+          (q 4 5 1 0))))))
 
 (defun load-textures ()
   (format t "tex~%")
@@ -109,6 +110,9 @@
   (glim:color-material :front :ambient-and-diffuse)
   (glim:enable :light0 :lighting :cull-face :depth-test)
   (load-textures)
+  (cffi:foreign-funcall-pointer
+   (funcall %gl:*gl-get-proc-address* "wglSwapIntervalEXT")
+   nil :int (if *vsync* 1 0) :int)
   (setf (shaders w) (3b-glim/gl:load-shaders)))
 
 (declaim (inline deg-to-rad rad-to-deg))
@@ -130,6 +134,164 @@
                    0.0 f 0.0 0.0
                    0.0 0.0 (/ (+ z-near z-far) dz) (/ (* 2 z-near z-far) dz)
                    0.0 0.0 -1.0 0.0)))
+
+
+(defun prim-test (w)
+  (glim:with-pushed-matrix (:modelview)
+    (glim:matrix-mode :modelview)
+    (glim:load-identity)
+    (glim:point-size 11)
+    (glim:line-width 11)
+    (glim:secondary-color 0.1 0.1 0.1)
+    (glim:scale 0.01 0.01 1)
+    (glim:translate -40 -30 0)
+    (glim:scale 3 3 1)
+    (glim:disable :texture-2d)
+    (glim:disable :texture-1d)
+    (glim:disable :lighting :line-smooth :point-smooth)
+    (glim:disable :light0 :light1)
+    (glim:polygon-mode :front-and-back :fill)
+    (glim:color 0 0 0 1)
+    (gl:cull-face :back)
+    (gl:disable :cull-face)
+    (glim:with-primitives :quads
+      (glim:vertex -2.5 -4 -1.1)
+      (glim:vertex 30 -4 -1.1)
+      (glim:vertex 30 5 -1.1)
+      (glim:vertex -2.5 5 -1.1))
+    (let ((i 1))
+      (labels ((v (x y)
+                 (incf i)
+                 (glim:color (* (ldb (byte 2 0) i) 0.5)
+                             (* (ldb (byte 2 2) i) 0.5)
+                             (* (ldb (byte 2 4) i) 0.5))
+                 (glim:vertex x y -1 1))
+               (t1 (x1 y1)
+                 (v (+ x1 0) (+ y1 0))
+                 (v (+ x1 0) (+ y1 1))
+                 (v (+ x1 1) (+ y1 0))
+                 (v (+ x1 1) (+ y1 1))
+                 (v (+ x1 2) (+ y1 0))
+                 (v (+ x1 2) (+ y1 1))
+                 (v (+ x1 3) (+ y1 0))
+                 (v (+ x1 3) (+ y1 1)))
+               (tris (x1 y1)
+                 (v (+ x1 0) (+ y1 0))
+                 (v (+ x1 1) (+ y1 0))
+                 (v (+ x1 0.5) (+ y1 1))
+                 (v (+ x1 1) (+ y1 0))
+                 (v (+ x1 2) (+ y1 0))
+                 (v (+ x1 1.5) (+ y1 1))
+                 (v (+ x1 2) (+ y1 0))
+                 (v (+ x1 3) (+ y1 0))
+                 (v (+ x1 2.5) (+ y1 1)))
+               (tristrip (x1 y1)
+                 (v (+ x1 3.0) (+ y1 0))
+                 (v (+ x1 2.5) (+ y1 1))
+                 (v (+ x1 2.0) (+ y1 0))
+
+                 (v (+ x1 1.5) (+ y1 1))
+                 (v (+ x1 1.0) (+ y1 0))
+
+                 (v (+ x1 0.5) (+ y1 1))
+                 (v (+ x1 0.0) (+ y1 0)))
+               (trifan (x1 y1)
+                 (v (+ x1 2) (+ y1 0))
+                 (v (+ x1 4) (+ y1 0))
+                 (v (+ x1 4) (+ y1 1))
+                 (v (+ x1 2) (+ y1 1))
+                 (v (+ x1 0) (+ y1 1))
+                 (v (+ x1 0) (+ y1 0)))
+               (quads (x1 y1)
+                 (v (+ x1 0) (+ y1 0))
+                 (v (+ x1 1) (+ y1 0))
+                 (v (+ x1 1) (+ y1 1))
+                 (v (+ x1 0) (+ y1 1))
+
+                 (v (+ x1 1.3) (+ y1 0))
+                 (v (+ x1 2.3) (+ y1 0))
+                 (v (+ x1 2.3) (+ y1 1))
+                 (v (+ x1 1.3) (+ y1 1))
+
+                 (v (+ x1 2.6) (+ y1 0))
+                 (v (+ x1 3.6) (+ y1 0))
+                 (v (+ x1 3.6) (+ y1 1))
+                 (v (+ x1 2.6) (+ y1 1)))
+               (quadstrip (x1 y1)
+                 (v (+ x1 0) (+ y1 1))
+                 (v (+ x1 0) (+ y1 0))
+                 (v (+ x1 1) (+ y1 0))
+                 (v (+ x1 1) (+ y1 1))
+                 (v (+ x1 2) (+ y1 0))
+                 (v (+ x1 2) (+ y1 1))
+                 (v (+ x1 3) (+ y1 0))
+                 (v (+ x1 3) (+ y1 1))
+                 (v (+ x1 4) (+ y1 0))
+                 (v (+ x1 4) (+ y1 1))))
+        (glim:with-primitives :points
+          (t1 0 0))
+        (glim:with-primitives :lines
+          (t1 4 0))
+        (glim:with-primitives :line-strip
+          (t1 8 0))
+        #++
+        (glim:with-primitives :line-loop
+          (t1 8 0))
+        (glim:with-primitives :triangles
+          (tris 12 0))
+        (glim:with-primitives :triangle-strip
+          (tristrip 16 0))
+        (glim:with-primitives :triangle-fan
+          (trifan 20 0))
+        (glim:with-primitives :quads
+          (quads 0 -2))
+        (glim:with-primitives :quad-strip
+          (quadstrip 4 -2))
+
+        (setf i 1)
+        (glim:enable :point-smooth :line-smooth)
+        (glim:polygon-mode :front-and-back :wireframe)
+        (glim:with-primitives :points
+          (t1 0 2))
+        (glim:with-primitives :lines
+          (t1 4 2))
+        (glim:with-primitives :line-strip
+          (t1 8 2))
+        #++
+        (glim:with-primitives :line-loop
+          (t1 8 0))
+        (glim:with-primitives :triangles
+          (tris 12 2))
+        (glim:with-primitives :triangle-strip
+          (tristrip 16 2))
+
+        (glim:with-primitives :triangle-fan
+          (trifan 20 2))
+        (glim:with-primitives :quads
+          (quads 0 4))
+        (glim:with-primitives :quad-strip
+          (quadstrip 4 4))))
+    (glim:color 1 1 1 1)
+    (loop for i upto 120
+          for s = (/ (1+ i) 13.0)
+          for x = -1 then (+ x (max 0.2 (* 0.04 s)))
+          do (glim:point-size s)
+             (glim:with-primitives :points
+               (glim:vertex x 5.2 -1)))
+    (loop for i upto 180
+          for x = (* -14 (cos (* (- i 0) (/ pi 180))))
+          for y = (* 14 (sin (* (- i 0) (/ pi 180))))
+          do (glim:line-width (/ (1+ i) 18.0))
+             (glim:with-primitives :lines
+               (glim:vertex 13 6 -1)
+               (glim:vertex (+ 13 x) (+ 6 y) -1)))
+;;; shouldn't error on incomplete primitives
+    (glim:with-primitives :lines
+      (glim:vertex 0 0 0))
+    (glim:with-primitives :triangles
+      (glim:vertex 0 0 0))
+    (glim:with-primitives :quads
+      (glim:vertex 0 0 0))))
 
 (defvar *r* 0)
 (defvar *frames* 0)
@@ -291,7 +453,10 @@
               (glim:vertex -10 -1.1 10)
               (glim:vertex 10 -1.1 10)
               (glim:vertex 10 -1.1 -10)
-              (glim:vertex -10 -1.1 -10))))))
+              (glim:vertex -10 -1.1 -10)))
+
+          (when *prim-test*
+            (prim-test window)))))
     (glut:swap-buffers)))
 
 (defmethod glut:reshape ((window 3b-glim-example) width height)
@@ -313,6 +478,7 @@
     (:exit
      (glut:destroy-current-window))))
 
+
 (defmethod glut:keyboard ((window 3b-glim-example) key x y)
   (declare (ignore x y))
   (case key
@@ -325,6 +491,11 @@
      (format t "~&primitive = ~s~%"
              (aref *primitives* *primitive*)))
     (#\s (setf *sphere* (not *sphere*)))
+    (#\t (setf *prim-test* (not *prim-test*)))
+    (#\v (setf *vsync* (not *vsync*))
+     (cffi:foreign-funcall-pointer
+      (funcall %gl:*gl-get-proc-address* "wglSwapIntervalEXT")
+      nil :int (if *vsync* 1 0) :int))
     (#\space (setf *anim* (not *anim*)))
     (#\Esc
      (glut:destroy-current-window))))
@@ -349,3 +520,4 @@
 (glut:show-window)
 #++
 (glut:main-loop)
+

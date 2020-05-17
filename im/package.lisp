@@ -4,6 +4,8 @@
                 #:*matrix-stacks*
                 #:*matrices*
                 #:*current-matrix*)
+  (:import-from #:3b-glim/s
+                #:*state*)
   (:export
    ;; buffering/state tracking
    #:*state*
@@ -70,4 +72,7 @@
    ;; from other groups
 
    #:polygon-mode
-   #:bind-texture))
+   #:bind-texture
+   #:with-primitives
+   #:with-primitive
+   #:vertex-v))

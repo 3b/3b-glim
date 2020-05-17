@@ -36,7 +36,8 @@
               old
               (sb-cga:identity-matrix)))
     (when (eql *current-matrix* old)
-      (replace *current-matrix* (gethash id *matrices*)))))
+      (setf *current-matrix* (gethash id *matrices*))
+      #++(replace *current-matrix* (gethash id *matrices*)))))
 
 (defun load-identity ()
   (replace *current-matrix* (sb-cga:identity-matrix)))
@@ -135,3 +136,8 @@
         (progn ,@body)
      (maphash (lambda (k v) (declare (ignore k)) (assert (<= (length v) 1)))
               *matrix-stacks*)))
+
+(defmacro with-matrix-stacks (() &body body)
+  `(let ((*matrix-stacks* (make-hash-table))
+        (*matrices* (make-hash-table)))
+    ,@body))

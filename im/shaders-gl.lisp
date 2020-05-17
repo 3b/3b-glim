@@ -12,11 +12,11 @@
 
 (input position :vec4 :location 0)
 (input texture0 :vec4 :location 1)
-(input color :vec4 :location 3)
-(input normal :vec3 :location 4)
-(input tangent :vec4 :location 5)
+(input tangent :vec4 :location 2)
+(input normal :vec3 :location 3)
+(input color :vec4 :location 4)
+(input flags :vec4 :location 5)
 (input secondary-color :vec3 :location 6)
-(input flags :vec4 :location 7)
 
 (uniform mv :mat4) ;; model-view matrix
 ;;(uniform mvp :mat4) ;; model-view-projection matrix
@@ -339,7 +339,7 @@
          (scm (specular-m))
          (ecm (emissive-m))
          (acs (ambient-scene))
-         (clight (+ ecm (* acm acs))))
+         (clight dcm))
     (declare (:float a))
     (case draw-flag
       (3
@@ -350,19 +350,21 @@
       (t
        (when (<= a 0.0)
          (discard))
-       (when gl-front-facing
-         (unless (zerop (.x lights-enabled))
-           (incf clight (light 0 normal (@ ins position) eye-direction
-                               acm dcm scm)))
-         (unless (zerop (.y lights-enabled))
-           (incf clight (light 1 normal (@ ins position) eye-direction
-                               acm dcm scm)))
-         (unless (zerop (.z lights-enabled))
-           (incf clight (light 2 normal (@ ins position) eye-direction
-                               acm dcm scm)))
-         (unless (zerop (.w lights-enabled))
-           (incf clight (light 3 normal (@ ins position) eye-direction
-                               acm dcm scm))))
+       (unless (zerop (.z draw-flags))
+         (setf clight (+ ecm (* acm acs)))
+         (when gl-front-facing
+           (unless (zerop (.x lights-enabled))
+             (incf clight (light 0 normal (@ ins position) eye-direction
+                                 acm dcm scm)))
+           (unless (zerop (.y lights-enabled))
+             (incf clight (light 1 normal (@ ins position) eye-direction
+                                 acm dcm scm)))
+           (unless (zerop (.z lights-enabled))
+             (incf clight (light 2 normal (@ ins position) eye-direction
+                                 acm dcm scm)))
+           (unless (zerop (.w lights-enabled))
+             (incf clight (light 3 normal (@ ins position) eye-direction
+                                 acm dcm scm)))))
 
        (setf color (vec4 (if gl-front-facing
                              (.xyz clight)

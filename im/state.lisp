@@ -1,34 +1,34 @@
 (in-package #:3b-glim)
 
 
-(defvar *state*)
-;; using octet buffer + nibbles to allow storing things a bit more
-;; efficiently.
-(declaim (type (or null octet-vector) *buffer*))
-(defvar *buffer* nil)
-(declaim (type (and fixnum unsigned-byte) *buffer-index*))
-(defvar *buffer-index* 0)
-(declaim (type (or null u16-vector) *index-buffer*))
-(defvar *index-buffer* nil)
-(declaim (type (and fixnum unsigned-byte) *index-buffer-index*))
-(defvar *index-buffer-index* 0)
+(defconstant +position+ 0)
+(defconstant +texture0+ 1) ;; only supporting 1 textures for now
+(defconstant +tangent-width+ 2)
+(defconstant +normal+ 3)
+(defconstant +color+ 4)
+(defconstant +flags+ 5)
+(defconstant +secondary-color+ 6)
 
 
-(defun make-vertex-format (&rest vf &key vertex normal color tex-coord0
-                           &allow-other-keys)
-  (declare (ignore normal color tex-coord0))
-  ;; currently vertex must be 4 elements, and first thing in bufferr
-  (assert (= (car vertex) 4))
-  (assert (eql (car vf) :vertex))
-  (flet ((align (x)                   ; todo: check required alignment
-           ;; we always align each component to multiple of 4 bytes
-           (* 4 (ceiling x 4))))
-    (let ((h (make-hash-table))
-          (s 0))
-      (loop for (k (v es)) on vf by #'cddr
-            do (setf (gethash k h) (list s v))
-               (incf s (align (* v es))))
-      (list s h))))
+(defvar *format*
+  (3b-glim/s:compile-vertex-format
+   `(1
+     (,+position+ :vec4)
+     (,+texture0+ :vec4)
+     (,+tangent-width+ :vec4)
+     (,+normal+ :vec3)
+     (,+color+ :u8vec4)
+     ;; stores extra data for generating line vertices
+     ;; 0 = primitive type: see +trangle-flag+ etc above
+     ;; 1 = edge flag where applicable
+     ;; 2 = corner index for vertex-shader points/lines
+
+     (,+flags+ (:u8vec4 nil))
+     (,+secondary-color+ :u8vec3)
+     ))) ;; color
+
+
+
 
 ;; indices into flags[]
 (defconstant +prim-mode-flag+ 0)
@@ -48,6 +48,7 @@
 ;; indices for draw-flags uniform
 (defconstant +draw-flag-mode+ 0)
 (defconstant +draw-flag-mode-back+ 1)
+(defconstant +draw-flag-lighting+ 2)
 ;; values for +draw-flag-mode+
 (defconstant +draw-mode-normal+ 0)
 (defconstant +draw-mode-smooth+ 1)
@@ -55,32 +56,6 @@
 (defconstant +draw-mode-filled-wireframe+ 3) ;; tris/quads only
 ;; lighting stuff
 (defconstant +max-lights+ 4)
-
-;; fog coord? texgen?
-(defparameter *default-vertex-format*
-  ;; fixme: separate size from format, or store type too so writer
-  ;; will match. for now assuming float for vert/tex/normal/color, u8 for flags
-  '(:vertex (4 4)
-                                        ;:fog-coord (1 4)
-    :texture0 (4 4)
-    ;; only supporting 1 textures for now
-    ;;:texture1 (4 4)
-    ;;:texture2 (4 4)
-    ;;:texture3 (4 4)
-    :color (4 4)
-    :normal (3 4)
-    ;; stores extra data for generating line vertices
-    :tangent+width (4 4)
-    :secondary-color (3 4) ;; alpha is always 1
-    ;; 0 = primitive type: see +trangle-flag+ etc above
-    ;; 1 = edge flag where applicable
-    ;; 2 = corner index for vertex-shader points/lines
-    :flags (4 1)))
-(defparameter *default-vertex* (apply #'make-vertex-format
-                                      *default-vertex-format*))
-;; default buffer size in vertices (so actual size is probably 60-100x)
-;; 1.64MB with current defaults
-(defparameter *default-buffer-size* (expt 2 14))
 
 (defun make-flags ()
   (alexandria:plist-hash-table
@@ -106,36 +81,38 @@
   (spot-params (v3 0 180 0))
   (attenuation (v3 1 0 0)))
 
-(defclass glim-state ()
-  ;; size of buffer in vertices
-  ((buffer-size :initform *default-buffer-size* :reader buffer-size)
-   ;; parameters of current begin/end
+(defconstant +state-changed-line-width+ 0)
+(defconstant +state-changed-point-size+ 1)
+(defconstant +state-changed-draw-flags+ 2)
+(defconstant +state-changed-tex+ 3)
+(defconstant +state-changed-lighting+ 4)
+
+
+(defclass renderer-config ()
+  ())
+(defclass glim-state (3b-glim/s::writer-state)
+  (;; parameters of current begin/end
    (primitive :reader primitive :initform nil :writer (setf %primitive))
-   ;; parameters of completed chunks (either a begin/end pair, or from
-   ;; begin to buffer overflow)
-   (draws :reader draws :initform (make-array 32 :adjustable t :fill-pointer 0))
-   ;; array containing current vertex state
-   (current-vertex :reader current-vertex
-                   :initarg :current-vertex
-                   :initform (make-array (first *default-vertex*)
-                                         :element-type 'octet
-                                         :initial-element 0))
-   (quad-temp :accessor quad-temp :initform nil)
-   ;; size of vertex in floats
-   (vertex-size :accessor vertex-size :initform (first *default-vertex*)
-                :initarg :vertex-size)
-   ;; offsets/size of vertex attributes in current-vertex
-   (vertex-format :reader vertex-format :initform (second *default-vertex*)
-                  :initarg :format)
    (flags :reader flags :initform (make-flags))
+   (prim-flags :reader prim-flags
+               :initform (make-array 4 :element-type 'octet
+                                       :initial-element 0))
    (point-size :accessor current-point-size :initform 1.0)
    (line-width :accessor current-line-width :initform 1.0)
    (use-tess :reader use-tess :initform nil :writer (setf %use-tess))
    (renderer-config :reader renderer-config :initform nil
-                    :writer (setf %renderer-config))
+                    :accessor %renderer-config)
+   ;; extra space to remember previous vertices, used to convert
+   ;; strip/loop/quad primitives into separate tris
+   (primitive-temp :reader primitive-temp :initarg :primitive-temp)
+   ;; for line/strip/fan primitives, we need to track which part of a
+   ;; primitive we are drawing, 0 is start of batch, other values
+   ;; depends on type
+   (primitive-state :accessor primitive-state :initform 0)
+   ;; store position of previous points in line so we can calculate tangent
+   (line-temp :accessor line-temp :initform nil)
    ;; fixme: match GL defaults
    (shade-model :accessor %shade-model :initform :smooth)
-
    (light-model :reader %light-model :initform
                 (alexandria:plist-hash-table
                  `(:light-model-local-viewer 1)))
@@ -151,26 +128,25 @@
                       (make-light)))
    (draw-flags :accessor draw-flags :initform #(0 0 0 0))
    (textures :reader textures :initform (make-array '(3) :initial-element nil))
+   (state-changed-flags :accessor state-changed-flags :initform -1)
    ;; if set, called when buffer fills up, or at end of frame. passed
    ;; 1 argument containing draws since last call to draw callback or
    ;; to get-draws
    (draw-callback :reader draw-callback :initform nil :initarg :draw-callback)))
 
-
-(defun get-draws ()
-  (prog1
-      (copy-seq (draws *state*))
-    ;; clear old values so they aren't kept live
-    (fill (draws *state*) nil)
-    ;; and reset fill pointer
-    (setf (fill-pointer (draws *state*)) 0)))
-
-(defun maybe-call-draw-callback ()
-  (when (and (draw-callback *state*)
-             (plusp (length (draws *state*))))
-    (funcall (draw-callback *state*)
-             (get-draws))))
-
+(defmacro with-state ((&key draw-callback) &body body)
+  `(3b-glim/s:with-state (*format*)
+     (change-class *state* 'glim-state
+                   :draw-callback ,draw-callback
+                   :primitive-temp
+                   (coerce (loop repeat 4
+                                 collect (3b-glim/s::copy-current-vertex
+                                          *state*))
+                           'vector))
+     (with-matrix-stacks ()
+       (ensure-matrix :modelview)
+       (ensure-matrix :projection)
+       ,@body)))
 
 (defmethod (setf point-size) :before (n (s glim-state))
   ;; not valid inside BEGIN/END
@@ -181,119 +157,70 @@
   (assert (not (primitive s))))
 
 
-(declaim (inline current-vertex-index out*))
-(defun current-vertex-index ()
-  (let ((vs (vertex-size *state*))
-        (s (fourth (primitive *state*))))
-    (declare (fixnum vs s))
-    (/ (- *buffer-index* s)
-       vs)))
-
-(defun out* (from-buffer offset)
-  (let* ((s (vertex-size *state*))
-         (e (+ *buffer-index* s)))
-    (declare (fixnum e s))
-    (when *buffer*
-      (locally (declare (type octet-vector *buffer*))
-        (replace *buffer* from-buffer :start1 *buffer-index* :end1 e
-                                      :start2 offset)))
-    ;; return index of vertex in draw
-    (prog1
-        (current-vertex-index)
-      (setf *buffer-index* e))))
-
-(declaim (inline outi))
-(defun outi (index)
-  (setf (aref *index-buffer* *index-buffer-index*) index)
-  (incf *index-buffer-index*))
-
 (defun get-flag (flag)
   (gethash flag (flags *state*)))
-(defun notice-state-changed ())
+
+(defun get/clear-changed-flag (state change)
+  (plusp (shiftf (ldb (byte 1 change) (state-changed-flags state))
+                 0)))
+
+(defun notice-state-changed (state change)
+  (setf (ldb (byte 1 change) (state-changed-flags state)) 1))
+
+(defun notice-flag-changed (state flag)
+  (case flag
+    ((:lighting :light0 :light1 :light2 :light4)
+     (notice-state-changed state +state-changed-lighting+)
+     ;; lighting enable is in draw flags, so update that too
+     (notice-state-changed state +state-changed-draw-flags+))
+    ((:line-smooth :wireframe :point-smooth :filled-wireframe)
+     (notice-state-changed state +state-changed-draw-flags+))
+    ((:texture-1d :texture-2d :texture-3d)
+     (notice-state-changed state +state-changed-tex+))))
+
 (defun enable (&rest flags)
   (loop with h = (flags *state*)
-        with state-changed = nil
         for f in flags
         do (multiple-value-bind (old found) (gethash f h)
              (if found
-                 (setf (gethash f h) t
-                       state-changed (or state-changed (not old)))
-                 (gl:enable f)))
-        finally (when state-changed
-                  (notice-state-changed))))
+                 (progn
+                   (unless old
+                     (notice-flag-changed *state* f))
+                   (setf (gethash f h) t))
+                 (gl:enable f)))))
 
 (defun disable (&rest flags)
   (loop with h = (flags *state*)
-        with state-changed = nil
         for f in flags
         do (multiple-value-bind (old found) (gethash f h)
              (if found
-                 (setf (gethash f h) nil
-                       state-changed (or state-changed old))
-                 (gl:disable f)))
-        finally (when state-changed
-                  (notice-state-changed))))
+                 (progn
+                   (when old
+                     (notice-flag-changed *state* f))
+                   (setf (gethash f h) nil))
+                 (gl:disable f)))))
 
-(defmethod initialize-instance :after ((o glim-state) &key)
-  (let ((h (vertex-format o))
-        (*state* o))
-    (when (gethash :normal h)
-      (%normal 0.0 0.0 1.0))
-    (when (gethash :color h)
-      (%color 1.0 1.0 1.0 1.0))
-    (when (gethash :secondary-color h)
-      (%secondary-color 0.0 0.0 0.0))
-    #++(when (gethash :fog h)
-         (fog-coord 0.0))
-    (when (gethash :texture0 h)
-      (%multi-tex-coord 0 0.0 0.0 0.0 1.0))
-    (when (gethash :texture1 h)
-      (%multi-tex-coord 1 0.0 0.0 0.0 1.0))
-    (when (gethash :texture2 h)
-      (%multi-tex-coord 2 0.0 0.0 0.0 1.0))
-    (when (gethash :texture3 h)
-      (%multi-tex-coord 3 0.0 0.0 0.0 1.0))))
 
-(defun has-space-for-vertices (n)
-  (< (+ *buffer-index* (* n (vertex-size *state*)))
-     (length *buffer*)))
-(defun has-space-for-indices (n)
-  (< (+ *index-buffer-index* n)
-     (length *buffer*)))
+(defun maybe-call-draw-callback ()
+  (when (draw-callback *state*)
+    (let ((draws (3b-glim/s:get-draws))
+          (buffers (3b-glim/s:get-buffers)))
+      (when (and draws buffers)
+        (funcall (draw-callback *state*)
+                 (renderer-config *state*) draws buffers)))))
 
-(defmacro with-state ((&key draw-callback) &body body)
-  `(let ((*state* (make-instance 'glim-state
-                                 :draw-callback ,draw-callback))
-         ;; add option to use a single static buffer instead of allocating
-         ;; per frame?
-         (*matrix-stacks* (make-hash-table))
-         (*matrices* (make-hash-table)))
-     (ensure-matrix :modelview)
-     (ensure-matrix :projection)
-     ,@body))
-
-(defun reset-buffers ()
-  (setf *buffer* (make-array (* (vertex-size *state*)
-                                (buffer-size *state*))
-                             :element-type 'octet))
-  (setf *buffer-index* 0)
-  (setf *index-buffer* (make-array (* 3 (buffer-size *state*))
-                                   :element-type '(unsigned-byte 16)))
-  (setf *index-buffer-index* 0))
 
 (defmethod begin-frame ((state glim-state))
-  (reset-buffers)
-  (begin-frame (second (renderer-config state))))
+  (3b-glim/s:reset-buffers *state*)
+  (setf (state-changed-flags *state*) -1)
+  (begin-frame (renderer-config state)))
 
 (defmacro with-frame (() &body body)
-  `(let ((*buffer* nil)
-         (*buffer-index* 0)
-         (*index-buffer* nil)
-         (*index-buffer-index* 0))
-     (begin-frame *state*)
-     (prog1
-         (with-balanced-matrix-stacks () ,@body)
-       (maybe-call-draw-callback))))
+  ` (prog1
+        (with-balanced-matrix-stacks ()
+          (begin-frame *state*)
+          ,@body)
+      (maybe-call-draw-callback)))
 
 ;; define with and without S to match cl-opengl
 (defmacro with-primitives (primitive &body body)
@@ -325,151 +252,93 @@
                         ;; :polygon ?
                         )))
 
-
-(defun copy-partial (primitive from-buffer start end)
-                                        ;(declare (notinline out*))
-  (case primitive
-    (:line-strip
-     ;; don't need to copy if we are emitting lines as tris
-     (when (or (use-tess *state*)
-               (and (= (current-line-width *state*) 1)
-                    (not (gethash :line-smooth (flags *state*)))))
-       (assert (has-space-for-vertices 1))
-       ;; copy previous element
-       (out* from-buffer (- end (vertex-size *state*)))))
-    (:triangle-fan
-     (assert (has-space-for-vertices 2))
-     ;; copy first element and previous element
-     (out* from-buffer start)
-     (out* from-buffer (- end (vertex-size *state*))))
-    (:triangle-strip
-     (assert (has-space-for-vertices 2))
-     ;; copy previous 2 elements
-     (out* from-buffer (- end (* 2 (vertex-size *state*))))
-     (out* from-buffer (- end (vertex-size *state*))))
-    ;; quad-strip is always turned into tris
-
-    (:quad-strip
-     (assert (has-space-for-vertices 2))
-     ;; copy previous 2 elements
-     (out* from-buffer (- end (* 2 (vertex-size *state*))))
-     (out* from-buffer (- end (vertex-size *state*))))))
-
-(defun finish-chunk ()
-  (destructuring-bind (primitive size buffer start
-                       index-buffer index-start)
-      (primitive *state*)
-    (declare (ignorable primitive size))
-    (let ((i (current-vertex-index))
-          (base (/ start (vertex-size *state*))))
-      ;; skip draw if we don't have a full primitive
-      (flet ((f (f) (get-flag f))
-             (fi (f) (if (get-flag f) 1 0)))
-        (when (>= i 3)
-          ;; for now drawing everything as triangles
-          (vector-push-extend
-           (list :triangles
-                 :buffer buffer
-                 ;; not sure these are needed, but might be able to
-                 ;; upload less
-                 :start start :end *buffer-index*
-                 :base-index base
-                 :index-buffer index-buffer
-                 :start-index index-start
-                 :index-count
-                 ;; skip any partial triangles at end
-                 (* 3
-                    (floor (- *index-buffer-index* index-start)
-                           3))
-                 :textures (textures *state*)
-                 ;; fixme: copy this when it changes
-                 :lighting (when (f :lighting)
-                             (concatenate 'vector
-                                          (aref (lights *state*) 0)
-                                          (aref (lights *state*) 1)
-                                          (aref (lights *state*) 2)
-                                          (aref (lights *state*) 3)))
-                 :uniforms
-                 ;; fixme: build this once and only store changes?
-                 (list
-                  'mv (copy-seq (ensure-matrix :modelview))
-                  'proj (copy-seq (ensure-matrix :projection))
-                  'line-width (current-line-width *state*)
-                  'point-size (current-point-size *state*)
-                  'draw-flags (copy-seq (draw-flags *state*))
-                  'tex-mode0 (cond
-                               ((get-flag :texture-3d) +tex-mode-3d+)
-                               ((get-flag :texture-2d) +tex-mode-2d+)
-                               ((get-flag :texture-1d) +tex-mode-1d+)
-                               (t +tex-mode-off+))
-                  'light-postion (v4 0 3 0 1)
-                  'lights-enabled (if (f :lighting)
-                                      (vector (fi :light0) (fi :light1)
-                                              (fi :light2) (fi :light3))
-                                      (vector 0 0 0 0))
-                  ;; todo
-                  ;; 'normal-matrix (??)
-                  ))
-           (draws *state*))))
-      (setf (%primitive *state*) nil))))
-
-(defun set-primitive (primitive size &optional (start *buffer-index*)
-                                       (istart *index-buffer-index*))
-  (setf (%primitive *state*)
-        (list primitive size *buffer* start *index-buffer* istart)))
+(defun set-primitive (primitive size)
+  (setf (%primitive *state*) (list primitive size t)))
 
 
-(defun overflow ()
+(defun restart-draw ()
+  (let* ((state *state*)
+         (primitive (car (primitive state))))
+    (ecase primitive
+      ((:triangles :points :lines :quads)
+       ;; always draw whole primitive to buffer, so just reset index to 0
+       (setf (primitive-index state) 0))
+      (:line-strip
+       ;; need to track 1 vertex from previous draw
+       (setf (primitive-index state) 1))
+      ((:triangle-strip :triangle-fan :quad-strip)
+       ;; need to track 2 vertices from previous draw
+       (setf (primitive-index state) 2)))))
+
+
+(defun index-overflow ()
   (assert (primitive *state*))
-  (let ((prim (primitive *state*))
-        (end *buffer-index*))
-    (finish-chunk)
-    (reset-buffers)
-    (maybe-call-draw-callback)
-    (destructuring-bind (primitive size buffer old-start
-                         index-buffer old-index-start)
-        prim
-      (declare (ignore index-buffer old-index-start))
-      (let ((start *buffer-index*)
-            (istart *index-buffer-index*))
-        (set-primitive primitive size start istart)
-        (copy-partial primitive buffer old-start end)
-        (set-primitive primitive size start istart)))))
+  (3b-glim/s:end)
+  (maybe-call-draw-callback)
+  ;; possibly could skip index for :triangles primitive, but using it
+  ;; anyway for consistency for now
+  (3b-glim/s:begin :triangles :indexed t)
+  (restart-draw))
+
+(defun check-index-overflow ()
+  ;; if we have too many verts for 16bit indices (+ some extra space
+  ;; for safety), start a new batch
+  (when (> (+ (3b-glim/s::next-index *state*) 6)
+           65535)
+    (index-overflow)
+    t))
+
+(defun %flag (offset value)
+  (let ((pf (prim-flags *state*)))
+    (declare (type octet-vector pf))
+    (setf (aref pf offset) value)
+    (3b-glim/s:attrib-u8v +flags+  pf)))
 
 (defun begin (primitive)
   #++(declare (optimize speed))
   (let ((prim-size (gethash primitive *primitives*))
-        (o (car (gethash :flags (vertex-format *state*))))
-        (cv (current-vertex *state*)))
+        (state *state*))
     (macrolet ((df (flag mode &rest more)
                  `(cond
-                    ,@ (loop for (f m) on (list* flag mode more) by 'cddr
-                             collect  `((get-flag ,f)
-                                        (setf (aref (draw-flags *state*)
-                                                    +draw-flag-mode+)
-                                              (float ,m 0.0))))
-                       (t (setf (aref (draw-flags *state*)
-                                      +draw-flag-mode+)
-                                (float +draw-mode-normal+ 0.0)))))
+                    ,@ (loop for (f m) on (list* flag mode more) by #'cddr
+                             collect `((get-flag ,f)
+                                       (unless (= (aref (draw-flags state)
+                                                        +draw-flag-mode+)
+                                                  (float ,m 0.0))
+                                         (notice-state-changed
+                                          state +state-changed-draw-flags+))
+                                       (setf (aref (draw-flags state)
+                                                   +draw-flag-mode+)
+                                             (float ,m 0.0))))
+                       (t
+                        (unless (= (aref (draw-flags state)
+                                         +draw-flag-mode+)
+                                   (float +draw-mode-normal+ 0.0))
+                          (notice-state-changed
+                           state +state-changed-draw-flags+))
+                        (setf (aref (draw-flags state)
+                                    +draw-flag-mode+)
+                              (float +draw-mode-normal+ 0.0)))))
                (dfb (flag mode &rest more)
                  `(cond
-                    ,@ (loop for (f m) on (list* flag mode more) by 'cddr
+                    ,@ (loop for (f m) on (list* flag mode more) by #'cddr
                              collect  `((get-flag ,f)
-                                        (setf (aref (draw-flags *state*)
+                                        (setf (aref (draw-flags state)
                                                     +draw-flag-mode-back+)
                                               (float ,m 0.0))))
-                       (t (setf (aref (draw-flags *state*)
+                       (t (setf (aref (draw-flags state)
                                       +draw-flag-mode-back+)
                                 (float +draw-mode-normal+ 0.0))))))
       (ecase primitive
         (:points
-         (setf (aref cv (+ o +prim-mode-flag+)) +point-flag+)
+         (%flag +prim-mode-flag+ +point-flag+)
          (df :point-smooth +draw-mode-smooth+))
         ((:lines :line-strip)
-         (df :line-smooth +draw-mode-smooth+)
-         (setf (aref cv (+ o +prim-mode-flag+)) +line-flag+))
+         (%flag +prim-mode-flag+ +line-flag+)
+         (setf (line-temp state) (v4 0 0 0 1))
+         (df :line-smooth +draw-mode-smooth+))
         ((:triangles :triangle-fan :triangle-strip)
-         (setf (aref cv (+ o +prim-mode-flag+)) +triangle-flag+)
+         (%flag +prim-mode-flag+ +triangle-flag+)
          (df :filled-wireframe +draw-mode-filled-wireframe+
              :wireframe +draw-mode-wireframe+)
          (dfb :backface-fill +draw-mode-normal+
@@ -478,326 +347,373 @@
               :filled-wireframe +draw-mode-filled-wireframe+
               :wireframe +draw-mode-wireframe+))
         ((:quads :quad-strip)
+         (%flag +prim-mode-flag+ +quad-flag+)
          (df :filled-wireframe +draw-mode-filled-wireframe+
              :wireframe +draw-mode-wireframe+)
          (dfb :backface-fill +draw-mode-normal+
               :backface-filled-wireframe +draw-mode-filled-wireframe+
               :backface-wireframe +draw-mode-wireframe+
               :filled-wireframe +draw-mode-filled-wireframe+
-              :wireframe +draw-mode-wireframe+)
-         (setf (aref cv (+ o +prim-mode-flag+)) +quad-flag+))))
+              :wireframe +draw-mode-wireframe+))))
+    (setf (aref (draw-flags state) +draw-flag-lighting+)
+          (if (get-flag :lighting) 1.0 0.0))
     ;; todo: error messages
     (assert prim-size)
-    (assert (not (primitive *state*)))
-    (unless (and (has-space-for-vertices 4)
-                 (has-space-for-indices 4))
-      (reset-buffers))
+    (assert (not (primitive state)))
+    (setf (primitive-state state) 0)
+    ;; fixme: don't reset these if they haven't changed, or don't
+    ;; apply
+    (flet ((f (f) (get-flag f))
+           (fi (f) (if (get-flag f) 1 0)))
+      (3b-glim/s:uniform 'mv (ensure-matrix :modelview))
+      (3b-glim/s:uniform 'proj (ensure-matrix :projection))
+      (when (get/clear-changed-flag state +state-changed-line-width+)
+        (3b-glim/s:uniform 'line-width (current-line-width state)))
+      (when (get/clear-changed-flag state +state-changed-point-size+)
+        (3b-glim/s:uniform 'point-size (current-point-size state)))
+      (when (get/clear-changed-flag state +state-changed-draw-flags+)
+        (3b-glim/s:uniform 'draw-flags (draw-flags state)))
+      (when (get/clear-changed-flag state +state-changed-tex+)
+        (3b-glim/s:uniform :textures
+                           (copy-seq (textures state)))
+        (3b-glim/s:uniform 'tex-mode0 (cond
+                                        ((get-flag :texture-3d) +tex-mode-3d+)
+                                        ((get-flag :texture-2d) +tex-mode-2d+)
+                                        ((get-flag :texture-1d) +tex-mode-1d+)
+                                        (t +tex-mode-off+))))
+      (when (get/clear-changed-flag state +state-changed-lighting+)
+        (3b-glim/s:uniform 'lights-enabled
+                           (if (f :lighting)
+                               (vector (fi :light0) (fi :light1)
+                                       (fi :light2) (fi :light3))
+                               (vector 0 0 0 0)))
+        (when (f :lighting)
+          (3b-glim/s:uniform :lighting
+                             (concatenate 'vector
+                                          (aref (lights state) 0)
+                                          (aref (lights state) 1)
+                                          (aref (lights state) 2)
+                                          (aref (lights state) 3))))))
+    (3b-glim/s:begin :triangles :indexed t)
+    (check-index-overflow)
+
     (set-primitive primitive prim-size)))
 
 (defun end ()
   (assert (primitive *state*))
-  (finish-chunk))
-
-;;; w/tess
-;;; point: store/submit as point, expand to 2 tris
-;;; line: store/submit as line, expand to 2 tris
-;;; line-strip: store/submit as lines, expand to 2 tris
-;;; line-loop = ?
-;;; triangles: as is
-;;; triangle strip: as is
-;;; triangle fan: as is
-;;; quads: store/submit as 4-patch, output quad?
-;;; quad-strips: like quads?
+  (setf (line-temp *state*) nil)
+  (3b-glim/s:end)
+  #++(maybe-call-draw-callback)
+  #++(finish-chunk))
 
 
-;;; w/o tess:
-
-;;; point: store/submit as 2 tris (= 4 verts)
-;; = 1 vertex repeated 4 times, with flag[2] = 0-3 to indicate which
-;;  vertex. set edge flags for outer edges if set for vertex?
-
-;;; line/line-strip: store/submit as 2 tris (= 4 verts) per quad
-;; = 2 vertices, repeated 2 times each, with flag[1] = 0-3 to indicate
-;;  which vertex? dir between 2 points stored in tangent[]. Using
-;;  round end caps, so don't need to care about adjacent lines in
-;;  line-strip (set edge flags for outer edges if set for vertex?)
-
-;;; line-loop: ?
-;; = not implemented for now...
-
-;;; triangles:
-;; stored as-is
-
-;;; triangle-strip:
-;; expand to separate triangles w/shared indices
-
-;;; quads:
-;; expand to 2 triangles, set edge flag to 0 for generated edge
-
-;;; quad-strip:
-;; same as quads?
-
-
-
-
-(defun write-vertex-line (cv)
+(defun write-vertex-line (v)
   (declare (optimize speed)
-           (type octet-vector cv))
+           (type (float-vector 4) v))
   ;; todo: tess and non-smooth width 1 lines
   #++
   (or (use-tess *state*)
       (and (= (current-line-width *state*) 1)
            (not (gethash :line-smooth (flags *state*)))))
-  (assert *buffer*)
-  (destructuring-bind (o1 s)
-      (gethash :tangent+width (vertex-format *state*))
-    (declare (ignore s) (type u16 o1))
-    (let ((o (+ o1 (* 3 4))))
-      (setf (nibbles:ieee-single-ref/le cv o) (current-line-width *state*))))
-  (let* ((index (current-vertex-index))
-         ;; we write 1 vertex for start of line, 3 more for end, so if
-         ;; index is a multiple of 4 we are starting a line, otherwise
-         ;; ending a line
-         (end (plusp (mod index 4)))
-         (vs (vertex-size *state*)))
 
-    (declare (fixnum index)
-             (type u16 vs)
-             (type octet-vector *buffer*))
-    (if end
-        ;; store opposite end in each point, for calculating wide lines
-        ;; todo: rename 'tangent' uniform now that it is opposite end
-        (let* ((vf (vertex-format *state*))
-               (s (- *buffer-index* vs))
-               (to (first (gethash :tangent+width vf)))
-               (fo (first (gethash :flags vf)))
-               (sv (sb-cga:vec
-                    ;; position is at start of vertex, so no extra offset
-                    (nibbles:ieee-single-ref/le *buffer* (+ s 0))
-                    (nibbles:ieee-single-ref/le *buffer* (+ s 4))
-                    (nibbles:ieee-single-ref/le *buffer* (+ s 8))))
-               (ev (sb-cga:vec
-                    (nibbles:ieee-single-ref/le cv 0)
-                    (nibbles:ieee-single-ref/le cv 4)
-                    (nibbles:ieee-single-ref/le cv 8))))
-          (declare (type u32 s)
-                   (type u16 fo to))
-          (loop for i below 3
-                do (setf (nibbles:ieee-single-ref/le *buffer*
-                                                     (+ s to (* i 4)))
-                         (aref ev i))
-                   (setf (nibbles:ieee-single-ref/le cv (+ to (* i 4)))
-                         (aref sv i)))
 
-          ;; set corner index in flags of start vertex
-          (setf (aref *buffer* (+ s fo +corner-index-flag+)) 0)
-          ;; then write remaining 3 vertices and indices
-          (let ((s2 *buffer-index*))
-            ;; duplicate first vertex
-            (out* *buffer* (- *buffer-index* vs))
-            ;; set index in flags of 2nd vertex
-            (setf (aref *buffer* (+ s2 fo +corner-index-flag+)) 1))
-          ;; write 2nd vertex twice with different corner index
-          (setf (aref cv (+ fo +corner-index-flag+)) 2)
-          (out* cv 0)
-          (setf (aref cv (+ fo +corner-index-flag+)) 3)
-          (let ((i (out* cv 0)))
-            (declare (fixnum i))
-            ;; write index buffer
-            (outi (- i 3))
-            (outi (- i 2))
-            (outi (- i 1))
+  ;; make sure we have space for a whole quad
+  (check-index-overflow)
 
-            (outi (- i 3))
-            (outi (- i 1))
-            (outi (- i 0))))
-        ;; for start of line, just write 1 vertex
-        (out* cv 0))
-    ;; if we ended a line, make sure we have enough space for 4 more
-    ;; verts and 6 indices
-    (when (and end (or (not (has-space-for-vertices 4))
-                       (not (has-space-for-indices 6))))
-      (overflow))))
+  ;; for line, we store start vertex in temp[0]
+  (let* ((state *state*)
+         (line-temp (line-temp state))
+         (primitive-temp (primitive-temp state)))
+    (declare (type (float-vector 4) line-temp)
+             (type (simple-array cons (4))
+                   primitive-temp))
+    ;; if this is first vertex of a line, just store it
+    (when (evenp (primitive-state state)) ;; 0 or 2
+      (incf (the fixnum (primitive-state state)))
+      (replace line-temp v)
+      (3b-glim/s::copy-current-vertex-into state
+                                           (aref primitive-temp 0))
+      (return-from write-vertex-line nil))
+    ;; otherwise, we are at enpoint of a segment, so add a quad to
+    ;; buffers
+    (let ((curr v)
+          (prev line-temp)
+          (line-width (current-line-width state))
+          (i 0))
+      (declare (type (float-vector 4) curr prev)
+               (type single-float line-width)
+               (type u16 i))
+      ;; copy current vertex state
+      (3b-glim/s::copy-current-vertex-into state
+                                           (aref primitive-temp 1))
+      ;; and restore state from start of line, so we can emit the
+      ;; vertices
+      (3b-glim/s::restore-vertex-copy state (aref primitive-temp 0))
+      ;; store current point (in temp[0]) as tangent
+      (3b-glim/s::attrib-f +tangent-width+
+                           (aref curr 0) (aref curr 1) (aref curr 2)
+                           line-width)
+      ;; set corner and add points
+      (%flag +corner-index-flag+ 0)
+      (setf i (3b-glim/s::attrib-fv +position+ prev))
+      (%flag +corner-index-flag+ 1)
+      (3b-glim/s::attrib-fv +position+ prev)
 
-(defun write-vertex-line-strip (cv)
+      ;; restore state for end, and repeat
+      (3b-glim/s::restore-vertex-copy state (aref primitive-temp 1))
+      (3b-glim/s::attrib-f +tangent-width+
+                           (aref prev 0) (aref prev 1) (aref prev 2)
+                           line-width )
+      ;; set corner and add points
+      (%flag +corner-index-flag+ 2)
+      (3b-glim/s::attrib-fv +position+ curr)
+      (%flag +corner-index-flag+ 3)
+      (3b-glim/s::attrib-fv +position+ curr)
+
+      ;; emit indices
+      (3b-glim/s:index (+ i 0) (+ i 1) (+ i 2))
+      (3b-glim/s:index (+ i 0) (+ i 2) (+ i 3))
+
+      ;; and update state
+      (setf (primitive-state state) 2))))
+
+(defun write-vertex-line-strip (v)
   ;; todo: tess and non-smooth width 1 lines
-  (let* ((index (current-vertex-index)))
-    ;; after first segment is done, we copy a vertex
-    (when (>= index 2)
-      (out* *buffer* (- *buffer-index* (vertex-size *state*))))
-    ;; and let line code handle the rest
-    (write-vertex-line cv)))
 
-(defun write-vertex-point (cv)
+  ;; after first segment is done, we just update state to 'end of
+  ;; segment'
+  (when (>= (primitive-state *state*) 1)
+    (rotatef (aref (primitive-temp *state*) 0)
+             (aref (primitive-temp *state*) 1))
+    (setf (primitive-state *state*) 1))
+  ;; and let line code handle the rest
+  (write-vertex-line v)
+  (replace (line-temp *state*) v))
+
+(defun write-vertex-point (v)
   (declare (optimize speed)
-           (type octet-vector cv))
+           (type (float-vector 4) v))
   ;; todo: tess path, non-smooth size=1
-  ;; store width in 4th element of tangent
-  (destructuring-bind (o1 s)
-      (gethash :tangent+width (vertex-format *state*))
-    (declare (type (unsigned-byte 16) o1 s))
-    (let ((o (+ o1 (* 3 s))))
-      (setf (nibbles:ieee-single-ref/le cv o) (current-point-size *state*))))
-  (let ((o (car (gethash :flags (vertex-format *state*)))))
-    (declare (type (unsigned-byte 16) o))
 
-    (let* ((v (loop with o = (+ +corner-index-flag+ o)
-                    for i below 4
-                    do (setf (aref cv o) i)
-                    collect (out* cv 0))))
+  ;; make sure we have space for a whole quad
+  (check-index-overflow)
+  (let* ((state *state*)
+         (point-size (current-point-size state))
+         (i 0))
+    (declare (type single-float point-size)
+             (type u16 i))
+    ;; store width in 4th element of tangent
+    (3b-glim/s::attrib-f +tangent-width+ 0.0 0.0 0.0 point-size)
+    ;; write out vertex 4 times with different corners
+    (%flag +corner-index-flag+ 0)
+    (setf i (3b-glim/s::attrib-fv +position+ v))
+    (%flag +corner-index-flag+ 1)
+    (3b-glim/s::attrib-fv +position+ v)
+    (%flag +corner-index-flag+ 2)
+    (3b-glim/s::attrib-fv +position+ v)
+    (%flag +corner-index-flag+ 3)
+    (3b-glim/s::attrib-fv +position+ v)
+    ;; and emit indices
+    (3b-glim/s:index (+ i 0) (+ i 1) (+ i 2))
+    (3b-glim/s:index (+ i 0) (+ i 2) (+ i 3))))
 
-      (outi (first v))
-      (outi (second v))
-      (outi (third v))
-      (outi (first v))
-      (outi (third v))
-      (outi (fourth v))))
-  (unless (has-space-for-vertices 4)
-    (overflow)))
-
-(defun write-vertex-quad (cv)
+(defun write-vertex-quad (v)
   (declare (optimize speed)
-           (type octet-vector cv))
-  (let ((o (car (gethash :flags (vertex-format *state*))))
-        (i (current-vertex-index)))
-    (declare (type u32 o i))
-    (setf (aref cv (+ o +corner-index-flag+))
-          (mod i 4)))
-  (let* ((i (out* cv 0))
-         (end (= 3 (mod i 4))))
-    (declare (type (unsigned-byte 16) i))
-    ;; at end of quad, write indices
-    (when end
-      (outi (- i 3))
-      (outi (- i 2))
-      (outi (- i 1))
+           (type (float-vector 4) v))
 
-      (outi (- i 3))
-      (outi (- i 1))
-      (outi (- i 0))
-      ;; and make sure we have enough space for 4 more verts and 6
-      ;; indices
-      (unless (and (has-space-for-vertices 4)
-                   (has-space-for-indices 6))
-        (overflow)))))
+  (let* ((c (primitive-state *state*))
+         (c4 (mod c 4))
+         (i 0))
+    (declare (type u32 c c4)
+             (type u16 i))
+    (when (zerop c4)
+      ;; make sure we have space for a whole quad
+      (check-index-overflow))
 
-(defun write-vertex-quad-strip (cv)
-  ;; for a quad strip, we need to duplicate previous 2 indices when we
-  ;; start a new quad after first
-  (let* ((index (current-vertex-index))
-         (new (and (> index 4)
-                   (zerop (mod index 4)))))
-    (when new
-      (let ((d (* 2 (vertex-size *state*))))
-        (out* *buffer* (- *buffer-index* d))
-        (out* *buffer* (- *buffer-index* d))))
-    ;; rest is handled by normal quad code
-    (write-vertex-quad cv)))
+    (%flag +corner-index-flag+ c4)
+    (setf (primitive-state *state*) (mod (1+ c) 4))
+    (setf i (3b-glim/s:attrib-fv +position+ v))
+    (when (= c 3)
+      (3b-glim/s:index (- i 3) (- i 2) (- i 1))
+      (3b-glim/s:index (- i 3) (- i 1) (- i 0)))))
+
+(defun write-vertex-quad-strip (v)
+  (declare (optimize speed)
+           (type (float-vector 4) v))
+
+  ;; make sure we have space for a whole quad
+  (check-index-overflow)
+
+  (let* ((state *state*)
+         (primitive-temp (primitive-temp state))
+         (c (primitive-state state))
+         (i 0))
+    (declare (type u32 c)
+             (type u16 i)
+             (type (simple-array t (4)) primitive-temp))
+    (when (= c 4)
+      ;; when starting a quad after first, duplicate previous 2 vertices
+      (3b-glim/s::copy-current-vertex-into state
+                                           (aref primitive-temp 2))
+      (3b-glim/s::restore-vertex-copy state
+                                      (aref primitive-temp 1))
+      (%flag +corner-index-flag+ 0)
+      (3b-glim/s::emit-vertex state)
+      (3b-glim/s::restore-vertex-copy state
+                                      (aref primitive-temp 0))
+      (%flag +corner-index-flag+ 1)
+      (3b-glim/s::emit-vertex state)
+      ;; restore current vertex
+      (3b-glim/s::restore-vertex-copy state
+                                      (aref primitive-temp 2))
+
+      ;; and skip state to last 2 vertices
+      (setf c 2))
+    (%flag +corner-index-flag+ c)
+    (setf i (3b-glim/s:attrib-fv +position+ v))
+    (when (> c 1)
+      ;; store vert for use in next quad
+      (3b-glim/s::copy-current-vertex-into state
+                                           (aref primitive-temp (- c 2))))
+    ;; mod 8 so we can distinguish first quad from later quads
+    (setf (primitive-state *state*) (mod (1+ c) 8))
+    (when (= c 3)
+      (3b-glim/s:index (- i 3) (- i 2) (- i 1))
+      (3b-glim/s:index (- i 3) (- i 1) (- i 0)))))
 
 
-(defun write-vertex ()
-  (declare (optimize speed))
-  (let ((primitive (car (primitive *state*)))
-        (cv (current-vertex *state*)))
-    (declare (type octet-vector cv))
-    (flet ((tri-corner (&optional (i (current-vertex-index)))
-             (let ((o (car (gethash :flags (vertex-format *state*)))))
-               (declare (type u32 o i))
-               (setf (aref cv (+ o +corner-index-flag+))
-                     (mod i 3)))))
+(defun write-vertex (v)
+  (declare (optimize speed)
+           (type (float-vector 4) v))
+  (let* ((state *state*)
+         (primitive (car (primitive state)))
+         (primitive-temp (primitive-temp state))
+         (ps (primitive-state state)))
+    (declare (type u16 ps)
+             (type (simple-array t (4)) primitive-temp))
+    (flet ((tri-corner (&optional (i ps))
+             (declare (type u16 i))
+             (%flag +corner-index-flag+ (mod i 3))
+             nil))
       (ecase primitive
         ((:triangles)
          (tri-corner)
-         (let ((o (car (gethash :flags (vertex-format *state*))))
-               (i (current-vertex-index)))
-           (declare (type u32 o i))
-           (setf (aref cv (+ o +corner-index-flag+))
-                 (mod i 3)))
-         (let ((index (out* cv 0)))
-           (outi index)
-           (when (and (zerop (mod (1+ index) 3))
-                      (not (has-space-for-vertices 3)))
-             (overflow))
-           (unless (has-space-for-indices 3)
-             (overflow))))
+         (when (zerop ps)
+           (check-index-overflow))
+         (setf ps (mod (+ ps 1) 3))
+         (setf (primitive-state state) ps)
+         (3b-glim/s:index (3b-glim/s:attrib-fv +position+ v)))
         (:triangle-strip
          (tri-corner)
-         (let ((i (out* cv 0)))
-           ;; index 0 and 1 don't make a triangle, otherwise copy 2 indices
-           (when (> i 1)
-             (multiple-value-bind (f r) (floor i 2)
-               (outi (1- (* f 2)))
-               (outi (* 2 (+ f (- r 1))))))
-           (outi i)
-           (unless (has-space-for-vertices 1)
-             (overflow))
-           (when (and (> i 1) (not (has-space-for-indices 3)))
-             (overflow))))
+         (let ((p3 (mod ps 3)))
+           (3b-glim/s::copy-current-vertex-into state
+                                                (aref primitive-temp p3))
+           ;; if we restarted a batch, we need to emit previous 2
+           ;; vertices again, otherwise we share indices with previous
+           ;; tris
+           (when (and (check-index-overflow)
+                      (> ps 2))
+             (3b-glim/s::restore-vertex-copy
+              state (aref primitive-temp (mod (+ p3 1) 3)))
+             (3b-glim/s::emit-vertex state)
+             (3b-glim/s::restore-vertex-copy
+              state (aref primitive-temp (mod (+ p3 2) 3)))
+             (3b-glim/s::emit-vertex state)
+             (3b-glim/s::restore-vertex-copy
+              state (aref primitive-temp p3)))
+
+           ;; mod 6 so we can distinguish first tri
+           (setf ps (mod (+ ps 1) 6))
+           (setf (primitive-state state) ps)
+           #++(3b-glim/s:index (3b-glim/s:attrib-fv +position+ v))
+           (let ((i (3b-glim/s:attrib-fv +position+ v)))
+             (declare (type u16 i))
+             ;; index 0 and 1 don't make a triangle, otherwise emit
+             ;; indices for a triangle
+             (when (> i 1)
+                                        ;(3b-glim/s:index (- i 2) (- i 1) i)
+               (multiple-value-bind (f r) (floor i 2)
+                 (3b-glim/s:index (* 2 (+ f (- r 1)))
+                                  (1- (* f 2))
+                                  i))))))
         (:triangle-fan
-         (if (zerop (current-vertex-index))
-             (tri-corner 0)
-             (tri-corner (1+ (mod (current-vertex-index) 2))))
-         (let ((i (out* cv 0)))
-           ;; index 0 and 1 don't make a triangle, otherwise copy 2 indices
+         (tri-corner)
+         ;; if we restarted a batch, we need to emit previous 2
+         ;; vertices again, otherwise we share indices with previous
+         ;; tris
+         (when (and (check-index-overflow)
+                    (> ps 2))
+           (3b-glim/s::restore-vertex-copy state (aref primitive-temp 0))
+           (3b-glim/s::emit-vertex state)
+           (3b-glim/s::restore-vertex-copy state (aref primitive-temp 1))
+           (3b-glim/s::emit-vertex state)
+           (3b-glim/s::restore-vertex-copy state (aref primitive-temp 2)))
+         (let ((i (3b-glim/s:attrib-fv +position+ v)))
+           (declare (type u16 i))
+           (3b-glim/s::restore-vertex-copy state (aref primitive-temp ps))
+           ;; index 0 and 1 don't make a triangle, otherwise emit
+           ;; indices
            (when (> i 1)
-             (outi 0)
-             (outi (1- i)))
-           (outi i)
-           (unless (has-space-for-vertices 1)
-             (overflow))
-           (when (and (> i 1) (not (has-space-for-indices 3)))
-             (overflow))))
+             (3b-glim/s:index 0 (1- i) i))
+           (setf (primitive-state state) (ecase ps (0 1) (1 2) (2 1)))))
         (:points
-         (write-vertex-point cv))
+         (write-vertex-point v))
         ;; :lines and line-strips are converted to quads if size /= 1 or if
         ;;  smooth is on
         (:lines
-         (write-vertex-line cv))
+         (write-vertex-line v))
         (:line-strip
-         (write-vertex-line-strip cv))
+         (write-vertex-line-strip v))
         (:line-loop
          ;; todo: needs to store state extra state across chunks to close
          ;; loop
          )
         ;; :quads and :quad-strip are converted to tris / tri-strips
         (:quads
-         (write-vertex-quad cv))
+         (write-vertex-quad v))
         (:quad-strip
-         (write-vertex-quad-strip cv))))))
+         (write-vertex-quad-strip v))))))
 
 
 (defun %vertex (x y z w)
-  (declare (optimize speed))
-  (let ((s (gethash :vertex (vertex-format *state*))))
-    (assert s)
-    (destructuring-bind (o c) s
-      (check-type o (unsigned-byte 30))
-      (check-type c fixnum)
-      (assert (= c 4))
-      (let ((v (current-vertex *state*)))
-        ;; fixme: endianness?
-        (setf (nibbles:ieee-single-ref/le v (+ o 0)) x)
-        (setf (nibbles:ieee-single-ref/le v (+ o 4)) y)
-        (setf (nibbles:ieee-single-ref/le v (+ o 8)) z)
-        (setf (nibbles:ieee-single-ref/le v (+ o 12)) w)))
-    (write-vertex)))
-(declaim (inline vertex))
+  (declare (optimize speed) (type single-float x y z w))
+  (let ((v (v4 x y z w)))
+    (declare (type (float-vector 4) v)
+             (dynamic-extent v))
+    (write-vertex v)
+    nil))
+
+(declaim (inline vertex vertex-v))
 (defun vertex (x &optional (y 0.0) (z 0.0) (w 1.0))
   (%vertex (f x) (f y) (f z) (f w)))
 
+(defun vertex-v (v)
+  (etypecase v
+    ((float-vector 4)
+     (%vertex (aref v 0) (aref v 1) (aref v 2) (aref v 3)))
+    ((float-vector 3)
+     (%vertex (aref v 0) (aref v 1) (aref v 2) 1.0))
+    ((float-vector 2)
+     (%vertex (aref v 0) (aref v 1) 0.0 1.0))
+    ((float-vector 1)
+     (%vertex (aref v 0) 0.0 0.0 1.0))
+    (vector
+     (flet ((a (x &optional (d 0.0) )
+              (if (array-in-bounds-p v x)
+                  (aref v x)
+                  d)))
+       (vertex (a 0 0.0) (a 1 0.0) (a 2 0.0) (a 3 0.0))))
+    (list (apply 'vertex v))))
+
 (defun %normal (x y z)
-  (let ((s (gethash :normal (vertex-format *state*))))
-    (when s
-      (destructuring-bind (o c) s
-        (assert (= c 3))
-        (let ((v (current-vertex *state*)))
-          (setf (nibbles:ieee-single-ref/le v (+ o 0)) x)
-          (setf (nibbles:ieee-single-ref/le v (+ o 4)) y)
-          (setf (nibbles:ieee-single-ref/le v (+ o 8)) z))))))
+  (declare (optimize speed) (type single-float x y z))
+  (3b-glim/s:attrib-f +normal+ x y z))
+
 (declaim (inline normal))
 (defun normal (x y z)
   (%normal (f x) (f y) (f z)))
 
+#++
 (defun edge-flag (flag)
   (let ((s (gethash :flags (vertex-format *state*))))
     (when s
@@ -805,19 +721,9 @@
         (setf (aref v (+ (car s) 0)) (if flag 1 0))))))
 
 (defun %multi-tex-coord (tex s tt r q)
-  (declare (optimize speed))
-  (when (numberp tex)
-    (setf tex (aref #(:texture0 :texture1 :texture2 :texture3) tex)))
-  (let* ((spec (gethash tex (vertex-format *state*))))
-    (when spec
-      (destructuring-bind (o c) spec
-        (check-type o (unsigned-byte 30))
-        (check-type c fixnum)
-        (let ((v (current-vertex *state*)))
-          (setf (nibbles:ieee-single-ref/le v (+ o 0)) s)
-          (when (> c 1) (setf (nibbles:ieee-single-ref/le v (+ o 4)) tt))
-          (when (> c 2) (setf (nibbles:ieee-single-ref/le v (+ o 8)) r))
-          (when (> c 3) (setf (nibbles:ieee-single-ref/le v (+ o 12)) q)))))))
+  (declare (optimize speed) (type single-float s tt r q))
+  (assert (or (eql tex 0)(eql tex :texture0)))
+  (3b-glim/s:attrib-f +texture0+ s tt r q))
 
 (declaim (inline multi-tex-coord tex-coord))
 (defun multi-tex-coord (tex s &optional (tt 0.0) (r 0.0) (q 1.0))
@@ -828,18 +734,8 @@
 #++
 (defun fog-coord (x))
 (defun %color (r g b a)
-  (declare (optimize speed))
-  (let* ((spec (gethash :color (vertex-format *state*))))
-    (when spec
-      (destructuring-bind (o c) spec
-        (check-type o (unsigned-byte 30))
-        (check-type c fixnum)
-        (let ((v (current-vertex *state*)))
-          (assert (= c 4))
-          (setf (nibbles:ieee-single-ref/le v (+ o 0))  r)
-          (setf (nibbles:ieee-single-ref/le v (+ o 4))  g)
-          (setf (nibbles:ieee-single-ref/le v (+ o 8))  b)
-          (setf (nibbles:ieee-single-ref/le v (+ o 12)) a))))))
+  (declare (optimize speed) (type single-float r g b a))
+  (3b-glim/s:attrib-u8sc +color+ r g b a))
 
 (declaim (inline color))
 (defun color (r g b &optional (a 1.0))
@@ -847,14 +743,9 @@
 
 
 (defun %secondary-color (r g b)
-  (let* ((spec (gethash :secondary-color (vertex-format *state*))))
-    (when spec
-      (destructuring-bind (o c) spec
-        (let ((v (current-vertex *state*)))
-          (assert (= c 3))
-          (setf (nibbles:ieee-single-ref/le v (+ o 0)) r)
-          (setf (nibbles:ieee-single-ref/le v (+ o 4)) g)
-          (setf (nibbles:ieee-single-ref/le v (+ o 8)) b))))))
+  (declare (optimize speed) (type single-float r g b))
+  (3b-glim/s:attrib-u8sc +secondary-color+ r g b))
+
 (declaim (inline secondary-color))
 (defun secondary-color (r g b)
   (%secondary-color (f r) (f g) (f b)))
@@ -870,17 +761,21 @@
   (setf (gethash a (%color-material *state*)) b))
 
 
+#++
 (defun map-draws (fun draws)
-  (loop for draw across draws
+  (loop for draw in draws
         do (apply fun draw)))
 
 (defun line-width (w)
+  (notice-state-changed *state* +state-changed-line-width+)
   (setf (current-line-width *state*) (coerce w 'single-float)))
 
 (defun point-size (w)
+  (notice-state-changed *state* +state-changed-point-size+)
   (setf (current-point-size *state*) (coerce w 'single-float)))
 
 (defun polygon-mode (face mode)
+  (notice-state-changed *state* +state-changed-draw-flags+)
   (ecase face
     (:front
      (ecase mode
@@ -916,12 +811,14 @@
      (polygon-mode :back mode))))
 
 (defun bind-texture (target name)
+  (notice-state-changed *state* +state-changed-tex+)
   (setf (aref (textures *state*)
               (ecase target (:texture-1d 0) (:texture-2d 1) (:texture-3d 2)))
         name))
 
 (defun light (light pname param)
   (assert (< -1 light (length (lights *state*))))
+  (notice-state-changed *state* +state-changed-lighting+)
   (flet ((v3v () (map 'v3 'f param))
          (v4v () (map 'v4 'f param)))
     (ecase pname

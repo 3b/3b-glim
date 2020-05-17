@@ -1,10 +1,12 @@
 (defpackage #:3b-glim-scratchpad
   (:use :cl)
   (:local-nicknames (#:glim #:3b-glim))
+  (:import-from #:cl-glut #:keyboard)
   (:export
    #:display
    #:scratchpad
-   #:run))
+   #:run
+   #:keyboard))
 (in-package #:3b-glim-scratchpad)
 
 (defclass scratchpad (glut:window)
@@ -88,8 +90,7 @@
 
 (defvar *w* nil)
 (defmethod glut:idle ((window scratchpad))
-  (unless *w*
-    (setf *w* window))
+  (setf *w* window)
   (glut:post-redisplay))
 
 (defun scratchpad (type &rest args)

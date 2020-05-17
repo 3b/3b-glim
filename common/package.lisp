@@ -29,4 +29,6 @@
    #:s8
    #:s16
    #:s32
-   #:copy-matrix))
+   #:copy-matrix
+   #:with-matrix-stacks
+   #:float-vector))
