@@ -11,7 +11,9 @@
            #:init-gl
            #:entry
            #:mouse
-           #:mouse-wheel))
+           #:mouse-wheel
+           #:keyboard-up
+           #:destroy-window))
 (in-package 3b-glim-example/s)
 
 (defclass scratchpad (glut:window)
@@ -244,6 +246,8 @@
   (glim:matrix-mode :modelview)
   (glim:load-identity))
 
+(defmethod destroy-window ((window scratchpad))
+  (glut:destroy-current-window))
 
 (defmethod glut::menu ((window scratchpad) menu id)
   (format t "~&got menu item ~s from menu ~s~%" menu id)
@@ -258,14 +262,28 @@
 (defmethod keyboard ((window scratchpad) key x y)
   )
 
-(defmethod glut:keyboard ((window scratchpad) key x y)
+(defmethod keyboard :around ((window scratchpad) key x y)
+  (call-next-method)
   (case key
     (#\Esc
-     (glut:destroy-current-window))
-    (otherwise (keyboard window key x y))))
+     (glut:destroy-current-window))))
+
+(defmethod keyboard-up ((window scratchpad) key x y)
+  )
+
+(defmethod glut:keyboard ((window scratchpad) key x y)
+  (keyboard window key x y))
+
+(defmethod glut:keyboard-up ((window scratchpad) key x y)
+  (keyboard-up window key x y))
 
 (defmethod glut:special ((window scratchpad) key x y)
   (keyboard window key x y))
+
+(defmethod glut:special-up ((window scratchpad) key x y)
+  (keyboard-up window key x y))
+
+
 
 (defmethod mouse ((window scratchpad) button state x y)
   )
