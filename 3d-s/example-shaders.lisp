@@ -13,7 +13,13 @@
 
            #:pos #:normal #:uv #:color
            #:frag7
-           #:vert7))
+           #:vert7
+
+           ;; some minimal shaders for use from other things
+           #:vertex/simple
+           #:frag/solid
+           #:frag/tex
+))
 (in-package #:3b-glim-example/s-shaders)
 
 (input pos :vec3 :location 0)
@@ -24,6 +30,7 @@
 (uniform view :mat4)
 (uniform modelview :mat4)
 (uniform proj :mat4) ;; projection matrix
+(uniform normal-matrix :mat4)
 (uniform tex :sampler-2d)
 (uniform mouse :ivec2)
 (output color :vec4 :stage :fragment)
@@ -158,3 +165,18 @@
 
 (defun frag7 ()
   (setf color (vec4 0 1 1 1)))
+
+
+(defun vertex/simple ()
+  (setf gl-position (* proj modelview (vec4 pos 1)))
+  (setf (@ outs normal) (* (mat3 normal-matrix) normal)
+        (@ outs position) (vec3 (* modelview (vec4 pos 1)))
+        (@ outs uv) uv
+        (@ outs color) color))
+
+(defun frag/solid ()
+  (setf color (@ ins color)))
+
+(defun frag/tex ()
+  (setf color (texture tex (@ ins uv))))
+
