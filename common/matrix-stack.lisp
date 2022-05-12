@@ -102,10 +102,12 @@
         (f-n (float (- far near))))
     (replace
      *current-matrix*
-     (sb-cga:matrix (/ 2 r-l) 0.0 0.0 (- (/ (+ right left) r-l))
-                    0.0 (/ 2 t-b) 0.0 (- (/ (+ top bottom) t-b))
-                    0.0 0.0 (/ -2 f-n) (- (/ (+ far near) f-n))
-                    0.0 0.0 0.0 1.0))))
+     (sb-cga:matrix*
+      *current-matrix*
+      (sb-cga:matrix (/ 2 r-l) 0.0 0.0 (- (/ (+ right left) r-l))
+                     0.0 (/ 2 t-b) 0.0 (- (/ (+ top bottom) t-b))
+                     0.0 0.0 (/ -2 f-n) (- (/ (+ far near) f-n))
+                     0.0 0.0 0.0 1.0)))))
 
 (defun look-at (eye target up)
   (let* ((eye (v eye))
@@ -117,6 +119,7 @@
     (replace
      *current-matrix*
      (sb-cga:matrix*
+      *current-matrix*
       (sb-cga:transpose-matrix
        (sb-cga:matrix (aref x 0) (aref y 0) (- (aref z 0)) 0.0
                       (aref x 1) (aref y 1) (- (aref z 1)) 0.0
