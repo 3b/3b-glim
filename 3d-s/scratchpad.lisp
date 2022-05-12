@@ -240,7 +240,7 @@
   (gl:viewport 0 0 width height)
   (glim:matrix-mode :projection)
   (glim:load-identity)
-  (glim:perspective 50 (/ width height) 0.5 20)
+  (glim:perspective 50 (if (zerop height) 1 (/ width height)) 0.5 20)
   (glim:matrix-mode :modelview)
   (glim:load-identity))
 
