@@ -128,11 +128,12 @@
       (sb-cga:translate (sb-cga:vec* eye -1.0))))))
 
 (defmacro with-pushed-matrix ((id) &body body)
-  (alexandria:once-only (id)
-    `(progn
-       (push-matrix ,id)
-       (unwind-protect (progn ,@body)
-         (pop-matrix ,id)))))
+  ;; fixme: should once-only matrix, but only if it isn't a keyword
+  `(progn
+     (push-matrix ,id)
+     (matrix-mode ,id)
+     (unwind-protect (progn ,@body)
+       (pop-matrix ,id))))
 
 (defmacro with-balanced-matrix-stacks (() &body body)
   `(unwind-protect
