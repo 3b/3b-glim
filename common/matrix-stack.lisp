@@ -88,7 +88,7 @@
 
 (defun perspective (fovy-degrees aspect z-near z-far)
   (let ((f (float (/ (tan (/ (deg-to-rad fovy-degrees) 2))) 1.0))
-        (dz (- z-near z-far)))
+        (dz (float (- z-near z-far) 1.0)))
     (replace
      *current-matrix*
      (sb-cga:matrix (/ f aspect) 0.0 0.0 0.0
@@ -97,9 +97,9 @@
                     0.0 0.0 -1.0 0.0))))
 
 (defun ortho (left right bottom top near far)
-  (let ((r-l (- right left))
-        (t-b (- top bottom))
-        (f-n (- far near)))
+  (let ((r-l (float (- right left)))
+        (t-b (float (- top bottom)))
+        (f-n (float (- far near))))
     (replace
      *current-matrix*
      (sb-cga:matrix (/ 2 r-l) 0.0 0.0 (- (/ (+ right left) r-l))
