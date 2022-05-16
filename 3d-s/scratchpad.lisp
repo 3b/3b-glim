@@ -109,8 +109,12 @@
          (s (float (/ (- n *frametime*)
                       internal-time-units-per-second))))
     (when (>= s 10)
-      (format t "~&~s frames in ~s sec = ~s fps (~s s)~%"
-              *frames* s (/ *frames* s) (/ s *frames*))
+      (let ((spf (/ s *frames*)))
+        (if (> spf 1)
+            (format t "~&~s frames in ~s sec = ~s fps (~s s)~%"
+                    *frames* s (/ *frames* s) spf)
+            (format t "~&~s frames in ~s sec = ~s fps (~s ms)~%"
+                    *frames* s (/ *frames* s) (* 1000 spf))))
       (setf *frametime* n)
       (setf *frames* 0))))
 
