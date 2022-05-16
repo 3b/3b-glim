@@ -521,3 +521,6 @@
 #++
 (glut:main-loop)
 
+#++
+(loop for i across glut::*id->window*
+      when i do (glut:destroy-window (glut::id i)))
