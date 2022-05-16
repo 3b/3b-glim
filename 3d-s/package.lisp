@@ -4,6 +4,9 @@
 
    ;; buffering/state tracking
    #:*state*
+   #:current-point-size
+   #:current-line-width
+
    #:with-glim
 
    #:get-draws
@@ -39,6 +42,12 @@
    #:with-primitives #:with-primitive
    #:begin
    #:end
+
+   ;; general state
+   #:enable
+   #:disable
+   #:line-width
+   #:point-size
 
    ;; attribute specification within a draw
    #:attrib-f ;; coerces to floats if needed (todo: normalized ints?)

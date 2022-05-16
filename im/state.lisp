@@ -30,7 +30,7 @@
 
 
 
-;; indices into flags[]
+;; indices into prim-flags[]
 (defconstant +prim-mode-flag+ 0)
 (defconstant +edge-flag-flag+ 1)
 (defconstant +corner-index-flag+ 2)
@@ -97,8 +97,6 @@
    (prim-flags :reader prim-flags
                :initform (make-array 4 :element-type 'octet
                                        :initial-element 0))
-   (point-size :accessor current-point-size :initform 1.0)
-   (line-width :accessor current-line-width :initform 1.0)
    (use-tess :reader use-tess :initform nil :writer (setf %use-tess))
    (renderer-config :reader renderer-config :initform nil
                     :accessor %renderer-config)
@@ -136,26 +134,28 @@
 
 (defmacro with-state ((&key draw-callback) &body body)
   `(3b-glim/s:with-state (*format*)
-     (change-class *state* 'glim-state
-                   :draw-callback ,draw-callback
-                   :primitive-temp
-                   (coerce (loop repeat 4
-                                 collect (3b-glim/s::copy-current-vertex
-                                          *state*))
-                           'vector))
+     (unless (typep *state* 'glim-state)
+       (change-class *state* 'glim-state
+                     :draw-callback ,draw-callback
+                     :primitive-temp
+                     (coerce (loop repeat 4
+                                   collect (3b-glim/s::copy-current-vertex
+                                            *state*))
+                             'vector)))
      (with-matrix-stacks ()
        (ensure-matrix :modelview)
        (ensure-matrix :projection)
        ,@body)))
 
 (defmethod (setf point-size) :before (n (s glim-state))
+  (notice-state-changed *state* +state-changed-line-width+)
   ;; not valid inside BEGIN/END
   (assert (not (primitive s))))
 
 (defmethod (setf line-width) :before (n (s glim-state))
+  (notice-state-changed *state* +state-changed-point-size+)
   ;; not valid inside BEGIN/END
   (assert (not (primitive s))))
-
 
 (defun get-flag (flag)
   (gethash flag (flags *state*)))
@@ -167,39 +167,19 @@
 (defun notice-state-changed (state change)
   (setf (ldb (byte 1 change) (state-changed-flags state)) 1))
 
-(defun notice-flag-changed (state flag)
+(defmethod notice-flag-changed ((state glim-state) flag new)
   (case flag
     ((:lighting :light0 :light1 :light2 :light4)
+     (setf (gethash flag (flags state)) new)
      (notice-state-changed state +state-changed-lighting+)
      ;; lighting enable is in draw flags, so update that too
      (notice-state-changed state +state-changed-draw-flags+))
     ((:line-smooth :wireframe :point-smooth :filled-wireframe)
+     (setf (gethash flag (flags state)) new)
      (notice-state-changed state +state-changed-draw-flags+))
     ((:texture-1d :texture-2d :texture-3d)
+     (setf (gethash flag (flags state)) new)
      (notice-state-changed state +state-changed-tex+))))
-
-(defun enable (&rest flags)
-  (loop with h = (flags *state*)
-        for f in flags
-        do (multiple-value-bind (old found) (gethash f h)
-             (if found
-                 (progn
-                   (unless old
-                     (notice-flag-changed *state* f))
-                   (setf (gethash f h) t))
-                 (gl:enable f)))))
-
-(defun disable (&rest flags)
-  (loop with h = (flags *state*)
-        for f in flags
-        do (multiple-value-bind (old found) (gethash f h)
-             (if found
-                 (progn
-                   (when old
-                     (notice-flag-changed *state* f))
-                   (setf (gethash f h) nil))
-                 (gl:disable f)))))
-
 
 (defun maybe-call-draw-callback ()
   (when (draw-callback *state*)
@@ -368,9 +348,9 @@
       (3b-glim/s:uniform 'mv (ensure-matrix :modelview))
       (3b-glim/s:uniform 'proj (ensure-matrix :projection))
       (when (get/clear-changed-flag state +state-changed-line-width+)
-        (3b-glim/s:uniform 'line-width (current-line-width state)))
+        (3b-glim/s:uniform 'line-width (s:current-line-width state)))
       (when (get/clear-changed-flag state +state-changed-point-size+)
-        (3b-glim/s:uniform 'point-size (current-point-size state)))
+        (3b-glim/s:uniform 'point-size (s:current-point-size state)))
       (when (get/clear-changed-flag state +state-changed-draw-flags+)
         (3b-glim/s:uniform 'draw-flags (draw-flags state)))
       (when (get/clear-changed-flag state +state-changed-tex+)
@@ -413,7 +393,7 @@
   ;; todo: tess and non-smooth width 1 lines
   #++
   (or (use-tess *state*)
-      (and (= (current-line-width *state*) 1)
+      (and (= (s:current-line-width *state*) 1)
            (not (gethash :line-smooth (flags *state*)))))
 
 
@@ -438,7 +418,7 @@
     ;; buffers
     (let ((curr v)
           (prev line-temp)
-          (line-width (current-line-width state))
+          (line-width (s:current-line-width state))
           (i 0))
       (declare (type (float-vector 4) curr prev)
                (type single-float line-width)
@@ -498,7 +478,7 @@
   ;; make sure we have space for a whole quad
   (check-index-overflow)
   (let* ((state *state*)
-         (point-size (current-point-size state))
+         (point-size (s:current-point-size state))
          (i 0))
     (declare (type single-float point-size)
              (type u16 i))
@@ -765,14 +745,6 @@
 (defun map-draws (fun draws)
   (loop for draw in draws
         do (apply fun draw)))
-
-(defun line-width (w)
-  (notice-state-changed *state* +state-changed-line-width+)
-  (setf (current-line-width *state*) (coerce w 'single-float)))
-
-(defun point-size (w)
-  (notice-state-changed *state* +state-changed-point-size+)
-  (setf (current-point-size *state*) (coerce w 'single-float)))
 
 (defun polygon-mode (face mode)
   (notice-state-changed *state* +state-changed-draw-flags+)

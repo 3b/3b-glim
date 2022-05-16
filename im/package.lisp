@@ -5,7 +5,12 @@
                 #:*matrices*
                 #:*current-matrix*)
   (:import-from #:3b-glim/s
-                #:*state*)
+                #:*state*
+                #:enable
+                #:disable
+                #:point-size
+                #:line-width)
+  (:local-nicknames (#:s #:3b-glim/s))
   (:export
    ;; buffering/state tracking
    #:*state*

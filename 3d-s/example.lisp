@@ -155,7 +155,7 @@
                               -0.991 1)))))
 
 (defun footprint ()
-  (gl:line-width 2)
+  (glim:line-width 2)
   (glim:with-pushed-matrix (:modelview)
     (glim:matrix-mode :modelview)
     (glim:load-identity)
@@ -211,12 +211,11 @@
       (glim:matrix-mode :modelview)
       (glim:load-identity)
 
-      (gl:enable :blend :depth-test
-                 :polygon-smooth :sample-alpha-to-coverage)
-      (gl:disable :cull-face :lighting :light0 :texture-2d)
+      (glim:enable :blend :depth-test :multisample
+                          :polygon-smooth :sample-alpha-to-coverage)
+      (glim:disable :cull-face :lighting :light0 :texture-2d)
 
       (gl:blend-func :src-alpha :one-minus-src-alpha)
-      (gl:enable :multisample)
       (glim:uniform 'proj (glim:copy-matrix :projection))
       (glim:with-pushed-matrix (:modelview)
         (glim:matrix-mode :modelview)

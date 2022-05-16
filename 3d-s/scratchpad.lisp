@@ -177,10 +177,23 @@
                  for shader-id = (glim::shader draw)
                  for vertex-base = (glim::vertex-base draw)
                  for vertex-count = (glim::vertex-count draw)
+                 for enables = (3b-glim/s::enables draw)
+                 for disables = (3b-glim/s::disables draw)
                  for (program uniformh) = (gethash shader-id (programs w))
+                 do #++(when (or enables disables)
+                      (format t "~&enable ~s~%disable ~s~%" enables disables))
+                    (mapcar #'gl:enable enables)
+                    (mapcar #'gl:disable disables)
                  when program
                    do (gl:use-program program)
                       (when uniformh
+                        (case primitive
+                          ((:lines :lines-adjacency
+                            :line-strip :line-strip-adjacency
+                            :line-loop)
+                           (gl:line-width (3b-glim/s::%line-width draw)))
+                          ((:points)
+                           (gl:point-size (3b-glim/s::%point-size draw))))
                         (loop for u being the hash-keys of uniforms
                                 using (hash-value v)
                               for uu = (gethash u uniformh)

@@ -264,7 +264,13 @@
    (uniforms :Reader uniforms :initarg :uniforms)
    ;; # of elements needed to finish a primitive (fixme:possibly not used?)
    (overflow-threshold :reader overflow-threshold :initform 1
-                       :initarg :overflow-threshold)))
+                       :initarg :overflow-threshold)
+   ;; size/width if drawing matching primitive
+   (point-size :reader %point-size :initarg :point-size)
+   (line-width :reader %line-width :initarg :line-width)
+   ;; list of states to gl:enable/gl:disable
+   (enables :reader enables :initarg :enables)
+   (disables :reader disables :initarg :disables)))
 
 (defclass writer-state ()
   ;; compiled vertex format
@@ -304,7 +310,58 @@
    ;; though)
    (overflow-callback :reader overflow-callback :initarg :overflow-callback)
    (uniforms :reader uniforms :initarg :uniforms :initform (make-hash-table))
-   (uniform-delta :accessor uniform-delta :initform nil)))
+   (uniform-delta :accessor uniform-delta :initform nil)
+   ;; GL state that should be associated with subsequent draws, rather
+   ;; than any that happen to be dispatched later
+   (point-size :accessor current-point-size :initform 1.0)
+   (line-width :accessor current-line-width :initform 1.0)
+   ;; things to enable/disable on next draw, if different from value
+   ;; in old-enables (so mixing with manual calls to
+   ;; gl:enable/gl:disable will cause problems).
+   (new-enables :reader new-enables :initform (make-hash-table))
+   ;; todo: specify initial values (probably mostly match GL?)
+   (old-enables :reader old-enables :initform (make-hash-table))))
+
+
+(defmethod notice-flag-changed (state flag new))
+
+(defun get-enable (flag)
+  (multiple-value-bind (new found) (gethash flag (new-enables *state*))
+    (if found
+        (values new found)
+        (gethash flag (old-enables *state*)))))
+
+(defun enable (&rest flags)
+  (loop with h = (new-enables *state*)
+        for f in flags
+        do (setf (gethash f h) t)
+           (notice-flag-changed *state* f t)))
+
+(defun disable (&rest flags)
+  (loop with h = (new-enables *state*)
+        for f in flags
+        do (setf (gethash f h) nil)
+           (notice-flag-changed *state* f nil)))
+
+(defun collect-enables (state)
+  (let ((enables nil)
+        (disables nil))
+    (loop with old = (old-enables state)
+          for e being the hash-keys of (new-enables state)
+            using (hash-value s)
+          unless (eql s (gethash e old :new))
+            do (if s
+                   (push e enables)
+                   (push e disables))
+               (setf (gethash e old) s))
+    (clrhash (new-enables state))
+    (values enables disables)))
+
+(defun line-width (w)
+  (setf (current-line-width *state*) (coerce w 'single-float)))
+
+(defun point-size (w)
+  (setf (current-point-size *state*) (coerce w 'single-float)))
 
 (defmethod total-vertex-index ((state writer-state))
   (+ (vertex-index-offset state)
@@ -350,13 +407,19 @@
   (let ((psize (primitive-size primitive)))
     (unless (has-space-for-vertices state (car psize))
       (funcall (overflow-callback state) state :partial nil))
-    (push (make-instance 'draw
-                         :vertex-base (total-vertex-index state)
-                         :primitive primitive
-                         :overflow-threshold (second psize)
-                         :uniforms (alexandria:copy-hash-table
-                                    (uniforms state)))
-          (draws state))))
+    (multiple-value-bind (enables disables)
+        (collect-enables state)
+      (push (make-instance 'draw
+                           :vertex-base (total-vertex-index state)
+                           :primitive primitive
+                           :overflow-threshold (second psize)
+                           :uniforms (alexandria:copy-hash-table
+                                      (uniforms state))
+                           :point-size (current-point-size state)
+                           :line-width (current-line-width state)
+                           :enables enables
+                           :disables disables)
+            (draws state)))))
 
 (defun finish-draw (state)
   (update-draw-size state))
@@ -625,25 +688,30 @@
      (apply #'attrib-u8 (coerce v 'list))))
   (%attrib0 index))
 
-
 (defun begin (primitive &key indexed shader)
   (let* ((state *state*)
          (uniform-delta (uniform-delta state)))
     (assert (not (car (draws state))))
-    ;; if this is first draw, or we changed shaders, update all
-    ;; uniforms
-    (when (or (not uniform-delta)
-              (not (eql shader
-                        (shader (cadr (draws state))))))
-      (setf uniform-delta (alexandria:copy-hash-table (uniforms state))))
-    (setf (uniform-delta state) (make-hash-table))
-    (setf (car (draws state))
-          (make-instance 'draw :primitive primitive
-                               :shader shader
-                               :uniforms uniform-delta
-                               :vertex-base (total-vertex-index state)
-                               :index-base (when indexed
-                                             (total-index-index state))))))
+    (multiple-value-bind (enables disables)
+        (collect-enables state)
+      ;; if this is first draw, or we changed shaders, update all
+      ;; uniforms
+      (when (or (not uniform-delta)
+                (not (eql shader
+                          (shader (cadr (draws state))))))
+        (setf uniform-delta (alexandria:copy-hash-table (uniforms state))))
+      (setf (uniform-delta state) (make-hash-table))
+      (setf (car (draws state))
+            (make-instance 'draw :primitive primitive
+                                 :shader shader
+                                 :uniforms uniform-delta
+                                 :vertex-base (total-vertex-index state)
+                                 :index-base (when indexed
+                                               (total-index-index state))
+                                 :point-size (current-point-size state)
+                                 :line-width (current-line-width state)
+                                 :enables enables
+                                 :disables disables)))))
 
 (defun end ()
   (update-draw-size *state*)
