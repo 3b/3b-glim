@@ -77,4 +77,6 @@
    #:reset-buffers
    #:copy-current-vertex
    #:attrib-u8v
-   #:attrib-fv))
+   #:attrib-fv
+   #:viewport
+   #:scissor))

@@ -270,7 +270,10 @@
    (line-width :reader %line-width :initarg :line-width)
    ;; list of states to gl:enable/gl:disable
    (enables :reader enables :initarg :enables)
-   (disables :reader disables :initarg :disables)))
+   (disables :reader disables :initarg :disables)
+   ;; scissor/viewport rect (x y wx wy) or nil
+   (scissor :reader %scissor :initarg :scissor)
+   (viewport :reader %viewport :initarg :viewport)))
 
 (defclass writer-state ()
   ;; compiled vertex format
@@ -320,7 +323,12 @@
    ;; gl:enable/gl:disable will cause problems).
    (new-enables :reader new-enables :initform (make-hash-table))
    ;; todo: specify initial values (probably mostly match GL?)
-   (old-enables :reader old-enables :initform (make-hash-table))))
+   (old-enables :reader old-enables :initform (make-hash-table))
+   ;; scissor/viewport rectangle (x y wx wy) or NIL
+   (new-scissor :accessor new-scissor :initform nil)
+   (old-scissor :accessor old-scissor :initform nil)
+   (new-viewport :accessor new-viewport :initform nil)
+   (old-viewport :accessor old-viewport :initform nil)))
 
 
 (defmethod notice-flag-changed (state flag new))
@@ -357,11 +365,28 @@
     (clrhash (new-enables state))
     (values enables disables)))
 
+(defun collect-scissor-view (state)
+  (let ((scissor (new-scissor state))
+        (viewport (new-viewport state)))
+    (if (equalp scissor (old-scissor state))
+        (setf scissor nil)
+        (setf (old-scissor state) scissor))
+    (if (equalp viewport (old-viewport state))
+        (setf viewport nil)
+        (setf (old-viewport state) viewport))
+    (values scissor viewport)))
+
 (defun line-width (w)
   (setf (current-line-width *state*) (coerce w 'single-float)))
 
 (defun point-size (w)
   (setf (current-point-size *state*) (coerce w 'single-float)))
+
+(defun scissor (x y wx wy)
+  (setf (new-scissor *state*) (list x y wx wy)))
+
+(defun viewport (x y wx wy)
+  (setf (new-viewport *state*) (list x y wx wy)))
 
 (defmethod total-vertex-index ((state writer-state))
   (+ (vertex-index-offset state)
@@ -409,17 +434,21 @@
       (funcall (overflow-callback state) state :partial nil))
     (multiple-value-bind (enables disables)
         (collect-enables state)
-      (push (make-instance 'draw
-                           :vertex-base (total-vertex-index state)
-                           :primitive primitive
-                           :overflow-threshold (second psize)
-                           :uniforms (alexandria:copy-hash-table
-                                      (uniforms state))
-                           :point-size (current-point-size state)
-                           :line-width (current-line-width state)
-                           :enables enables
-                           :disables disables)
-            (draws state)))))
+      (multiple-value-bind (scissor viewport)
+          (collect-scissor-view state)
+        (push (make-instance 'draw
+                             :vertex-base (total-vertex-index state)
+                             :primitive primitive
+                             :overflow-threshold (second psize)
+                             :uniforms (alexandria:copy-hash-table
+                                        (uniforms state))
+                             :point-size (current-point-size state)
+                             :line-width (current-line-width state)
+                             :scissor scissor
+                             :viewport viewport
+                             :enables enables
+                             :disables disables)
+              (draws state))))))
 
 (defun finish-draw (state)
   (update-draw-size state))
@@ -694,24 +723,28 @@
     (assert (not (car (draws state))))
     (multiple-value-bind (enables disables)
         (collect-enables state)
-      ;; if this is first draw, or we changed shaders, update all
-      ;; uniforms
-      (when (or (not uniform-delta)
-                (not (eql shader
-                          (shader (cadr (draws state))))))
-        (setf uniform-delta (alexandria:copy-hash-table (uniforms state))))
-      (setf (uniform-delta state) (make-hash-table))
-      (setf (car (draws state))
-            (make-instance 'draw :primitive primitive
-                                 :shader shader
-                                 :uniforms uniform-delta
-                                 :vertex-base (total-vertex-index state)
-                                 :index-base (when indexed
-                                               (total-index-index state))
-                                 :point-size (current-point-size state)
-                                 :line-width (current-line-width state)
-                                 :enables enables
-                                 :disables disables)))))
+      (multiple-value-bind (scissor viewport)
+          (collect-scissor-view state)
+        ;; if this is first draw, or we changed shaders, update all
+        ;; uniforms
+        (when (or (not uniform-delta)
+                  (not (eql shader
+                            (shader (cadr (draws state))))))
+          (setf uniform-delta (alexandria:copy-hash-table (uniforms state))))
+        (setf (uniform-delta state) (make-hash-table))
+        (setf (car (draws state))
+              (make-instance 'draw :primitive primitive
+                                   :shader shader
+                                   :uniforms uniform-delta
+                                   :vertex-base (total-vertex-index state)
+                                   :index-base (when indexed
+                                                 (total-index-index state))
+                                   :point-size (current-point-size state)
+                                   :line-width (current-line-width state)
+                                   :scissor scissor
+                                   :viewport viewport
+                                   :enables enables
+                                   :disables disables))))))
 
 (defun end ()
   (update-draw-size *state*)

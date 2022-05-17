@@ -183,11 +183,17 @@
                  for vertex-count = (glim::vertex-count draw)
                  for enables = (3b-glim/s::enables draw)
                  for disables = (3b-glim/s::disables draw)
+                 for scissor = (3b-glim/s::%scissor draw)
+                 for viewport = (3b-glim/s::%viewport draw)
                  for (program uniformh) = (gethash shader-id (programs w))
-                 do #++(when (or enables disables)
-                      (format t "~&enable ~s~%disable ~s~%" enables disables))
-                    (mapcar #'gl:enable enables)
+                 ;; set these even if no program, since they affect
+                 ;; later draws
+                 do (mapcar #'gl:enable enables)
                     (mapcar #'gl:disable disables)
+                    (when scissor
+                      (apply #'gl:scissor scissor))
+                    (when viewport
+                      (apply #'gl:viewport viewport))
                  when program
                    do (gl:use-program program)
                       (when uniformh

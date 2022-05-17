@@ -267,48 +267,53 @@ CONFIGURE-RENDERER or CONFIGURE-RENDERER* first."
              for vertex-count = (3b-glim/s::vertex-count draw)
              for enables = (3b-glim/s::enables draw)
              for disables = (3b-glim/s::disables draw)
-             do (when (or enables disables)
-                  (format t "~&enable ~s~%disable ~s~%" enables disables))
-                (mapcar #'gl:enable enables)
+             for scissor = (3b-glim/s::%scissor draw)
+             for viewport = (3b-glim/s::%viewport draw)
+             do (mapcar #'gl:enable enables)
                 (mapcar #'gl:disable disables)
+                (when scissor
+                  (apply #'gl:scissor scissor))
+                (when viewport
+                  (apply #'gl:viewport viewport))
+
                 (loop
-                     for u being the hash-keys of uniforms
-                       using (hash-value v)
-                     for uu = (gethash u uniformh)
-                     for (ui nil nil ut) = uu
-                     when (eql u :textures)
-                       do (loop
-                            for i from 0
-                            for tx across v
-                            for target in '(:texture-1d :texture-2d :texture-3d)
-                            for u in '(3b-glim:tex0-1 3b-glim:tex0-2
-                                       3b-glim:tex0-3)
-                            when tx
-                              do (gl:active-texture i)
-                                 (gl:bind-texture target tx)
-                                 (when uniformh
-                                   (gl:uniformi (car (gethash u uniformh '(-1))) i)))
-                     when (and (eql u :lighting)
-                               (light-uniforms config))
-                       do (loop for i across v
-                                for u across (light-uniforms config)
-                                when (plusp u)
-                                  do (gl:uniformfv u i))
-                     do (when (and ui (not (minusp ui)))
-                          (ecase ut
-                            (:int
-                             (gl:uniformi ui v))
-                            ((:ivec2 :ivec3 :ivec4)
-                             (if (numberp v)
-                                 (gl:uniformi ui v 0 0 0)
-                                 (gl:uniformiv ui v)))
-                            (:float (gl:uniformf ui v))
-                            ((:vec2 :vec3 :vec4)
-                             (if (numberp v)
-                                 (gl:uniformf ui v 0 0 0)
-                                 (gl:uniformfv ui v)))
-                            (:mat4
-                             (gl:uniform-matrix-4fv ui v nil)))))
+                  for u being the hash-keys of uniforms
+                    using (hash-value v)
+                  for uu = (gethash u uniformh)
+                  for (ui nil nil ut) = uu
+                  when (eql u :textures)
+                    do (loop
+                         for i from 0
+                         for tx across v
+                         for target in '(:texture-1d :texture-2d :texture-3d)
+                         for u in '(3b-glim:tex0-1 3b-glim:tex0-2
+                                    3b-glim:tex0-3)
+                         when tx
+                           do (gl:active-texture i)
+                              (gl:bind-texture target tx)
+                              (when uniformh
+                                (gl:uniformi (car (gethash u uniformh '(-1))) i)))
+                  when (and (eql u :lighting)
+                            (light-uniforms config))
+                    do (loop for i across v
+                             for u across (light-uniforms config)
+                             when (plusp u)
+                               do (gl:uniformfv u i))
+                  do (when (and ui (not (minusp ui)))
+                       (ecase ut
+                         (:int
+                          (gl:uniformi ui v))
+                         ((:ivec2 :ivec3 :ivec4)
+                          (if (numberp v)
+                              (gl:uniformi ui v 0 0 0)
+                              (gl:uniformiv ui v)))
+                         (:float (gl:uniformf ui v))
+                         ((:vec2 :vec3 :vec4)
+                          (if (numberp v)
+                              (gl:uniformf ui v 0 0 0)
+                              (gl:uniformfv ui v)))
+                         (:mat4
+                          (gl:uniform-matrix-4fv ui v nil)))))
                 (if index-base
                     (when (plusp index-count)
                       (%gl:draw-elements-base-vertex
